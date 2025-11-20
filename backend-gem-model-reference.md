@@ -110,7 +110,7 @@ The frontend maps backend field names to frontend field names as follows:
 | `suitableFor` | `suitableFor` | Array of suitable professions |
 | `price` | `price` | Gem price (required if contactForPrice is false) |
 | `sizeWeight` | `sizeWeight` | Size/weight of the gem |
-| `sizeUnit` | `sizeUnit` | Unit (carat, gram, ratti) |
+| `sizeUnit` | `sizeUnit` | Unit (carat, gram, ounce, ratti) |
 | `stock` | `stock` | Stock quantity |
 | `certification` | `certification` | Certification details |
 | `origin` | `origin` | Origin of the gem |
@@ -272,18 +272,21 @@ if (validationErrors) {
 Based on the frontend validation, the following fields are required:
 
 1. **name** (string, required)
-2. **hindiName** (string, required)
-3. **planet** (string, required)
-4. **color** (string, required)
-5. **description** (string, required)
-6. **benefits** (array, required, at least one item)
-7. **suitableFor** (array, required, at least one item)
-8. **price** (number, required if `contactForPrice` is false)
-9. **sizeWeight** (number, required)
-10. **certification** (string, required)
-11. **origin** (string, required)
-12. **deliveryDays** (number, required)
-13. **heroImage** (string, required)
+2. **category** (string, required)
+3. **hindiName** (string, required)
+4. **planet** (string, required)
+5. **planetHindi** (string, required)
+6. **color** (string, required)
+7. **description** (string, required)
+8. **benefits** (array, required, at least one item)
+9. **suitableFor** (array, required, at least one item)
+10. **price** (number, required if `contactForPrice` is false)
+11. **sizeWeight** (number, required)
+12. **sizeUnit** (string, required, must be one of: 'carat', 'gram', 'ounce', 'ratti')
+13. **certification** (string, required)
+14. **origin** (string, required)
+15. **deliveryDays** (number, required)
+16. **heroImage** (string, required)
 
 **Optional Fields:**
 - `birthMonth` (string, optional, must be valid month name or null/empty string)
