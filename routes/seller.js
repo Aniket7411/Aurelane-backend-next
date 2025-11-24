@@ -216,7 +216,7 @@ router.get('/orders', protect, checkRole('seller'), async (req, res) => {
         // Get orders with pagination
         const orders = await Order.find(filter)
             .populate('user', 'name email phone')
-            .populate('items.gem', 'name hindiName heroImage sizeWeight sizeUnit price')
+            .populate('items.gem', 'name hindiName heroImage sizeWeight sizeUnit price category subcategory')
             .sort({ createdAt: -1 })
             .skip(skip)
             .limit(parseInt(limit));

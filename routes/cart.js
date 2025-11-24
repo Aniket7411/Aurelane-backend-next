@@ -71,13 +71,13 @@ router.post('/add', protect, checkRole('buyer'), [
         await cart.save();
 
         // Populate cart for response
-        await cart.populate('items.gem', 'name price heroImage');
+        await cart.populate('items.gem', 'name price heroImage category subcategory');
 
         // Calculate totals
         const totalItems = cart.items.reduce((sum, item) => sum + item.quantity, 0);
         const totalPrice = cart.items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
 
-        await cart.populate('items.gem', 'name price heroImage stock availability');
+        await cart.populate('items.gem', 'name price heroImage stock availability category subcategory');
 
         res.json({
             success: true,
@@ -104,7 +104,7 @@ router.post('/add', protect, checkRole('buyer'), [
 router.get('/', protect, checkRole('buyer'), async (req, res) => {
     try {
         const cart = await Cart.findOne({ user: req.user._id })
-            .populate('items.gem', 'name hindiName price heroImage availability stock sizeWeight sizeUnit deliveryDays');
+            .populate('items.gem', 'name hindiName price heroImage availability stock sizeWeight sizeUnit deliveryDays category subcategory');
 
         if (!cart || cart.items.length === 0) {
             return res.json({
@@ -127,6 +127,8 @@ router.get('/', protect, checkRole('buyer'), async (req, res) => {
                 gem: {
                     _id: item.gem._id,
                     name: item.gem.name,
+                    category: item.gem.category,
+                    subcategory: item.gem.subcategory,
                     price: item.gem.price,
                     images: item.gem.heroImage ? [item.gem.heroImage] : []
                 },

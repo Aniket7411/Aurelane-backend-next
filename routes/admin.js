@@ -132,7 +132,7 @@ router.get('/sellers/:sellerId', protect, checkRole('admin'), async (req, res) =
 
         // Get seller's gems with full details
         const gems = await Gem.find({ seller: seller.user })
-            .select('name category price stock availability images sizeWeight sizeUnit')
+            .select('name category subcategory price stock availability images sizeWeight sizeUnit')
             .sort({ createdAt: -1 })
             .limit(10);
 
@@ -193,6 +193,7 @@ router.get('/sellers/:sellerId', protect, checkRole('admin'), async (req, res) =
                 _id: gem._id,
                 name: gem.name,
                 category: gem.category || gem.name,
+                subcategory: gem.subcategory || '',
                 price: gem.price,
                 stock: gem.stock,
                 images: gem.images || [gem.heroImage],
@@ -457,7 +458,7 @@ router.get('/orders', protect, checkRole('admin'), async (req, res) => {
 
         const orders = await Order.find(filter)
             .populate('user', 'name email')
-            .populate('items.gem', 'name heroImage')
+            .populate('items.gem', 'name heroImage category subcategory')
             .skip(skip)
             .limit(parseInt(limit))
             .sort({ createdAt: -1 });
@@ -476,7 +477,9 @@ router.get('/orders', protect, checkRole('admin'), async (req, res) => {
                 product: {
                     _id: item.gem?._id || item.gem,
                     name: item.gem?.name || 'Product',
-                    image: item.gem?.heroImage || ''
+                    image: item.gem?.heroImage || '',
+                    category: item.gem?.category || '',
+                    subcategory: item.gem?.subcategory || ''
                 },
                 quantity: item.quantity,
                 price: item.price
@@ -522,7 +525,7 @@ router.get('/orders/:orderId', protect, checkRole('admin'), async (req, res) => 
     try {
         const order = await Order.findById(req.params.orderId)
             .populate('user', 'name email phone')
-            .populate('items.gem', 'name heroImage price')
+            .populate('items.gem', 'name heroImage price category subcategory')
             .populate('items.seller', 'name email shopName');
 
         if (!order) {
@@ -554,7 +557,9 @@ router.get('/orders/:orderId', protect, checkRole('admin'), async (req, res) => 
                     _id: item.gem._id,
                     name: item.gem.name,
                     image: item.gem.heroImage,
-                    price: item.gem.price
+                    price: item.gem.price,
+                    category: item.gem.category,
+                    subcategory: item.gem.subcategory
                 },
                 quantity: item.quantity,
                 price: item.price,
@@ -630,7 +635,7 @@ router.put('/orders/:orderId/status', protect, checkRole('admin'), [
             { new: true }
         )
             .populate('user', 'name email')
-            .populate('items.gem', 'name');
+            .populate('items.gem', 'name category subcategory');
 
         if (!order) {
             return sendError(res, {
@@ -700,7 +705,7 @@ router.get('/gems', protect, checkRole('admin'), async (req, res) => {
 // @access  Private (Admin only)
 router.get('/products', protect, checkRole('admin'), async (req, res) => {
     try {
-        const { page = 1, limit = 20, search, category, sellerId, status } = req.query;
+        const { page = 1, limit = 20, search, category, subcategory, sellerId, status } = req.query;
 
         const filter = {};
         if (search) {
@@ -712,6 +717,9 @@ router.get('/products', protect, checkRole('admin'), async (req, res) => {
         }
         if (category) {
             filter.category = category;
+        }
+        if (subcategory) {
+            filter.subcategory = subcategory;
         }
         if (sellerId) {
             filter.seller = sellerId;
@@ -735,6 +743,7 @@ router.get('/products', protect, checkRole('admin'), async (req, res) => {
             _id: gem._id,
             name: gem.name,
             category: gem.category || gem.name,
+            subcategory: gem.subcategory || '',
             price: gem.price,
             stock: gem.stock,
             images: gem.images && gem.images.length > 0 ? gem.images : [gem.heroImage],
@@ -792,6 +801,7 @@ router.get('/products/:productId', protect, checkRole('admin'), async (req, res)
             _id: gem._id,
             name: gem.name,
             category: gem.category || gem.name,
+            subcategory: gem.subcategory || '',
             price: gem.price,
             stock: gem.stock,
             images: gem.images && gem.images.length > 0 ? gem.images : [gem.heroImage],
@@ -944,7 +954,7 @@ router.get('/buyers/:buyerId', protect, checkRole('admin'), async (req, res) => 
 
         // Get buyer's orders
         const orders = await Order.find({ user: buyer._id })
-            .populate('items.gem', 'name heroImage')
+            .populate('items.gem', 'name heroImage category subcategory')
             .sort({ createdAt: -1 })
             .limit(10);
 

@@ -82,7 +82,7 @@ router.get('/', protect, async (req, res) => {
         const wishlist = await Wishlist.findOne({ user: userId })
             .populate({
                 path: 'items.gem',
-                select: 'name hindiName price discount discountType heroImage category sizeWeight sizeUnit stock availability'
+                select: 'name hindiName price discount discountType heroImage category subcategory sizeWeight sizeUnit stock availability'
             });
 
         if (!wishlist) {

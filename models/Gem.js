@@ -128,6 +128,12 @@ const gemSchema = new mongoose.Schema({
             'Turquoise'
         ]
     },
+    subcategory: {
+        type: String,
+        required: [true, 'Subcategory is required'],
+        trim: true,
+        maxlength: [255, 'Subcategory cannot be more than 255 characters']
+    },
     whomToUse: {
         type: [String],
         default: []
@@ -313,10 +319,12 @@ gemSchema.index({ contactForPrice: 1 }); // Contact-for-price filter
 gemSchema.index({ seller: 1 }); // Seller filter
 gemSchema.index({ createdAt: -1 }); // Newest first sorting
 gemSchema.index({ stock: 1 }); // Stock filter
+gemSchema.index({ subcategory: 1 }); // Subcategory filter
 
 // Compound indexes for common query patterns
 gemSchema.index({ availability: 1, name: 1 }); // Available gems by name
 gemSchema.index({ availability: 1, price: 1 }); // Available gems by price
 gemSchema.index({ availability: 1, planet: 1 }); // Available gems by planet
+gemSchema.index({ category: 1, subcategory: 1 }); // Category/subcategory lookup
 
 module.exports = mongoose.model('Gem', gemSchema);

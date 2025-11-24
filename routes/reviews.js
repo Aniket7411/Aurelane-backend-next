@@ -189,7 +189,7 @@ router.get('/gem/:gemId', async (req, res) => {
 router.get('/user', protect, async (req, res) => {
     try {
         const reviews = await Review.find({ userId: req.user._id })
-            .populate('gemId', 'name images price')
+            .populate('gemId', 'name images price category subcategory')
             .sort({ createdAt: -1 })
             .lean();
 
@@ -200,7 +200,9 @@ router.get('/user', protect, async (req, res) => {
                 gemId: review.gemId._id,
                 gem: {
                     _id: review.gemId._id,
-                    name: review.gemId.name
+                    name: review.gemId.name,
+                    category: review.gemId.category,
+                    subcategory: review.gemId.subcategory
                 },
                 rating: review.rating,
                 comment: review.comment,

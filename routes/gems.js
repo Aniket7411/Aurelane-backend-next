@@ -12,6 +12,7 @@ const router = express.Router();
 router.post('/', protect, checkRole('seller'), [
     body('name').trim().notEmpty().withMessage('Gem name is required'),
     body('category').trim().notEmpty().withMessage('Category is required'),
+    body('subcategory').trim().notEmpty().withMessage('Subcategory is required'),
     body('hindiName').trim().notEmpty().withMessage('Hindi name is required'),
     body('planet').trim().notEmpty().withMessage('Planet is required'),
     body('planetHindi').trim().notEmpty().withMessage('Planet Hindi is required'),
@@ -84,6 +85,7 @@ router.post('/', protect, checkRole('seller'), [
                 name: gem.name,
                 hindiName: gem.hindiName,
                 category: gem.category,
+                subcategory: gem.subcategory,
                 contactForPrice: gem.contactForPrice,
                 price: gem.price,
                 heroImage: gem.heroImage,
@@ -131,6 +133,7 @@ router.get('/', async (req, res) => {
             limit = 12,
             search = '',
             category = '',
+            subcategory = '',
             zodiac = '',
             planet = '',
             seller = '',
@@ -164,6 +167,16 @@ router.get('/', async (req, res) => {
             const categories = category.split(',').map(cat => cat.trim());
             // Filter by category field (frontend maps Gem Name to this)
             query.category = { $in: categories };
+        }
+
+        // 2.5. SUBCATEGORY FILTER (single or comma-separated)
+        if (subcategory && subcategory.trim()) {
+            const subcategories = subcategory.split(',').map(sub => sub.trim()).filter(Boolean);
+            if (subcategories.length > 1) {
+                query.subcategory = { $in: subcategories };
+            } else if (subcategories.length === 1) {
+                query.subcategory = { $regex: subcategories[0], $options: 'i' };
+            }
         }
 
         // 3. ZODIAC FILTER (searches in suitableFor array)
@@ -430,7 +443,7 @@ router.get('/search-suggestions', async (req, res) => {
             ],
             availability: true
         })
-            .select('name hindiName planet color suitableFor')
+            .select('name hindiName planet color suitableFor category subcategory')
             .limit(10)
             .lean(); // Use lean() for better performance
 
@@ -584,6 +597,7 @@ router.get('/:id', async (req, res) => {
             ...relatedProductsQuery,
             $or: [
                 { name: gem.name }, // Same gem name (highest priority)
+                { subcategory: gem.subcategory },
                 { planet: gem.planet }, // Same planet
                 { color: gem.color }, // Same color
                 ...(priceCriteria ? [priceCriteria] : [])
@@ -616,6 +630,8 @@ router.get('/:id', async (req, res) => {
                     _id: relatedGem._id,
                     name: relatedGem.name,
                     hindiName: relatedGem.hindiName,
+                    category: relatedGem.category,
+                    subcategory: relatedGem.subcategory,
                     planet: relatedGem.planet,
                     color: relatedGem.color,
                     price: relatedGem.price,
@@ -688,6 +704,8 @@ router.get('/:id', async (req, res) => {
 // @desc    Update gem (SELLER ONLY - Own gems)
 // @access  Private (Seller)
 router.put('/:id', protect, checkRole('seller'), [
+    body('category').optional().trim().notEmpty().withMessage('Category cannot be empty'),
+    body('subcategory').optional().trim().notEmpty().withMessage('Subcategory cannot be empty'),
     body('contactForPrice').optional().isBoolean().withMessage('contactForPrice must be a boolean'),
     body('price')
         .optional({ nullable: true })

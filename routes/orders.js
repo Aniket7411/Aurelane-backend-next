@@ -110,7 +110,7 @@ router.get('/my-orders', protect, checkRole('buyer'), async (req, res) => {
         const skip = (parseInt(page) - 1) * parseInt(limit);
 
         const orders = await Order.find(filter)
-            .populate('items.gem', 'name hindiName heroImage sizeWeight sizeUnit')
+            .populate('items.gem', 'name hindiName heroImage sizeWeight sizeUnit category subcategory')
             .skip(skip)
             .limit(parseInt(limit))
             .sort({ createdAt: -1 });
@@ -159,7 +159,7 @@ router.get('/seller/orders', protect, checkRole('seller'), async (req, res) => {
     try {
         const orders = await Order.find({ 'items.seller': req.user._id })
             .populate('user', 'name email phone')
-            .populate('items.gem', 'name')
+            .populate('items.gem', 'name category subcategory')
             .sort({ createdAt: -1 });
 
         // Format orders with buyer information
@@ -201,7 +201,7 @@ router.get('/:id', protect, async (req, res) => {
     try {
         const order = await Order.findById(req.params.id)
             .populate('user', 'name email')
-            .populate('items.gem', 'name heroImage price')
+            .populate('items.gem', 'name heroImage price category subcategory')
             .populate('items.seller', 'name email');
 
         if (!order) {

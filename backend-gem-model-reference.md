@@ -101,6 +101,7 @@ The frontend maps backend field names to frontend field names as follows:
 |--------------|---------------|-------|
 | `name` | `name` | Gem name |
 | `category` | `name` | Maps to name field (category is derived from name) |
+| `subcategory` | `subcategory` | Specific subcategory for the gem |
 | `hindiName` | `hindiName` | Hindi name of the gem |
 | `planet` | `planet` | Associated planet |
 | `planetHindi` | `planetHindi` | Planet name in Hindi |
@@ -273,20 +274,21 @@ Based on the frontend validation, the following fields are required:
 
 1. **name** (string, required)
 2. **category** (string, required)
-3. **hindiName** (string, required)
-4. **planet** (string, required)
-5. **planetHindi** (string, required)
-6. **color** (string, required)
-7. **description** (string, required)
-8. **benefits** (array, required, at least one item)
-9. **suitableFor** (array, required, at least one item)
-10. **price** (number, required if `contactForPrice` is false)
-11. **sizeWeight** (number, required)
-12. **sizeUnit** (string, required, must be one of: 'carat', 'gram', 'ounce', 'ratti')
-13. **certification** (string, required)
-14. **origin** (string, required)
-15. **deliveryDays** (number, required)
-16. **heroImage** (string, required)
+3. **subcategory** (string, required)
+4. **hindiName** (string, required)
+5. **planet** (string, required)
+6. **planetHindi** (string, required)
+7. **color** (string, required)
+8. **description** (string, required)
+9. **benefits** (array, required, at least one item)
+10. **suitableFor** (array, required, at least one item)
+11. **price** (number, required if `contactForPrice` is false)
+12. **sizeWeight** (number, required)
+13. **sizeUnit** (string, required, must be one of: 'carat', 'gram', 'ounce', 'ratti')
+14. **certification** (string, required)
+15. **origin** (string, required)
+16. **deliveryDays** (number, required)
+17. **heroImage** (string, required)
 
 **Optional Fields:**
 - `birthMonth` (string, optional, must be valid month name or null/empty string)
