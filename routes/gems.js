@@ -3,6 +3,346 @@ const { body, validationResult } = require('express-validator');
 const Gem = require('../models/Gem');
 const { protect } = require('../middleware/auth');
 const { checkRole } = require('../middleware/role');
+const Seller = require('../models/Seller');
+const { GEM_CATEGORIES, VALID_BIRTH_MONTHS } = require('../constants/gemFilters');
+
+const DEFAULT_PAGE = 1;
+const DEFAULT_LIMIT = 12;
+const MAX_LIMIT = 50;
+
+const CATEGORY_LIST = [...GEM_CATEGORIES];
+
+const VALID_ZODIAC_SIGNS = [
+    'aries', 'taurus', 'gemini', 'cancer', 'leo', 'virgo',
+    'libra', 'scorpio', 'sagittarius', 'capricorn', 'aquarius', 'pisces'
+];
+
+const sanitizeRegex = (value = '') => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const parseBoolean = (value) => {
+    if (value === true || value === 'true') return true;
+    if (value === false || value === 'false') return false;
+    return undefined;
+};
+
+const parseIntWithDefault = (value, fallback) => {
+    const parsed = parseInt(value, 10);
+    return Number.isNaN(parsed) || parsed < 1 ? fallback : parsed;
+};
+
+const normalizeLimit = (value) => Math.min(MAX_LIMIT, parseIntWithDefault(value, DEFAULT_LIMIT));
+
+const createBadRequestError = (message) => {
+    const error = new Error(message);
+    error.statusCode = 400;
+    return error;
+};
+
+const parseCategories = (rawCategories) => {
+    if (!rawCategories || !rawCategories.trim()) {
+        return [];
+    }
+    const categories = rawCategories
+        .split(',')
+        .map((cat) => cat.trim())
+        .filter(Boolean);
+
+    if (!categories.length) {
+        return [];
+    }
+
+    const invalid = categories.filter((cat) => !CATEGORY_LIST.includes(cat));
+    if (invalid.length) {
+        throw createBadRequestError(`Invalid categories: ${invalid.join(', ')}`);
+    }
+    return categories;
+};
+
+const buildCategoryCondition = (categories) => {
+    if (!categories.length) {
+        return undefined;
+    }
+    return categories.length === 1 ? categories[0] : { $in: categories };
+};
+
+const parseBirthMonth = (value) => {
+    if (value === undefined || value === null || value === '') {
+        return null;
+    }
+    if (!VALID_BIRTH_MONTHS.includes(value)) {
+        throw createBadRequestError(`Invalid birth month: ${value}`);
+    }
+    return value;
+};
+
+const parsePrice = (value) => {
+    if (value === undefined || value === null || value === '') {
+        return null;
+    }
+    const num = Number(value);
+    return Number.isNaN(num) ? null : num;
+};
+
+const buildPaginationMeta = ({ total, page, limit }) => {
+    const totalPages = Math.ceil(total / limit) || 0;
+    return {
+        totalItems: total,
+        totalGems: total,
+        totalPages,
+        currentPage: page,
+        hasNext: page < totalPages,
+        hasPrev: page > 1,
+        limit
+    };
+};
+
+const attachSellerProfiles = async (gems) => {
+    const sellerUserIds = Array.from(new Set(
+        gems
+            .map((gem) => (gem.seller && gem.seller._id ? gem.seller._id.toString() : null))
+            .filter(Boolean)
+    ));
+
+    const sellerProfiles = sellerUserIds.length
+        ? await Seller.find({ user: { $in: sellerUserIds } })
+            .select('user fullName shopName isVerified')
+            .lean()
+        : [];
+
+    const sellerProfileMap = new Map(
+        sellerProfiles.map((profile) => [profile.user.toString(), profile])
+    );
+
+    return gems.map((gem) => {
+        const sellerUserId = gem.seller && gem.seller._id ? gem.seller._id.toString() : null;
+        const sellerProfile = sellerUserId ? sellerProfileMap.get(sellerUserId) : null;
+        const fallbackSeller = gem.seller && gem.seller._id ? {
+            _id: gem.seller._id,
+            fullName: gem.seller.name || 'Seller',
+            shopName: 'Gem Store',
+            isVerified: false
+        } : {
+            _id: null,
+            fullName: 'Unknown Seller',
+            shopName: 'Gem Store',
+            isVerified: false
+        };
+
+        return {
+            ...gem,
+            seller: sellerProfile ? {
+                _id: sellerProfile._id,
+                fullName: sellerProfile.fullName,
+                shopName: sellerProfile.shopName,
+                isVerified: sellerProfile.isVerified
+            } : fallbackSeller
+        };
+    });
+};
+
+const sendGemResponse = (res, gems, pagination) => {
+    res.json({
+        success: true,
+        data: {
+            gems,
+            pagination
+        },
+        gems,
+        pagination
+    });
+};
+
+const respondWithError = (res, error, fallbackMessage) => {
+    if (error.statusCode) {
+        return res.status(error.statusCode).json({
+            success: false,
+            message: error.message
+        });
+    }
+
+    console.error(fallbackMessage, error);
+    return res.status(500).json({
+        success: false,
+        message: fallbackMessage
+    });
+};
+
+const buildGemQueryOptions = (queryParams = {}, baseQuery = {}) => {
+    const {
+        page = DEFAULT_PAGE,
+        limit = DEFAULT_LIMIT,
+        search = '',
+        category = '',
+        subcategory = '',
+        zodiac = '',
+        planet = '',
+        seller = '',
+        minPrice = '',
+        maxPrice = '',
+        sort = 'newest',
+        availability,
+        inStock,
+        lowStock,
+        outOfStock,
+        birthMonth = ''
+    } = queryParams;
+
+    const pageNumber = parseIntWithDefault(page, DEFAULT_PAGE);
+    const limitNumber = normalizeLimit(limit);
+
+    const query = { ...baseQuery };
+
+    // Search filter
+    if (search && search.trim()) {
+        const searchTerm = sanitizeRegex(search.trim());
+        query.$or = [
+            { name: { $regex: searchTerm, $options: 'i' } },
+            { hindiName: { $regex: searchTerm, $options: 'i' } },
+            { description: { $regex: searchTerm, $options: 'i' } },
+            { planet: { $regex: searchTerm, $options: 'i' } },
+            { planetHindi: { $regex: searchTerm, $options: 'i' } },
+            { color: { $regex: searchTerm, $options: 'i' } },
+            { origin: { $regex: searchTerm, $options: 'i' } },
+            { benefits: { $regex: searchTerm, $options: 'i' } },
+            { suitableFor: { $regex: searchTerm, $options: 'i' } }
+        ];
+    }
+
+    // Category filter (query param only if no base override)
+    if (!query.category && category) {
+        const categories = parseCategories(category);
+        const condition = buildCategoryCondition(categories);
+        if (condition) {
+            query.category = condition;
+        }
+    }
+
+    // Subcategory filter
+    if (subcategory && subcategory.trim()) {
+        const subcategories = subcategory
+            .split(',')
+            .map((sub) => sub.trim())
+            .filter(Boolean);
+        if (subcategories.length === 1) {
+            query.subcategory = subcategories[0];
+        } else if (subcategories.length > 1) {
+            query.subcategory = { $in: subcategories };
+        }
+    }
+
+    // Zodiac filter (query param) only when not overridden
+    if (!query.suitableFor && zodiac) {
+        query.suitableFor = { $regex: sanitizeRegex(zodiac), $options: 'i' };
+    }
+
+    // Planet filter
+    if (planet) {
+        query.planet = { $regex: sanitizeRegex(planet), $options: 'i' };
+    }
+
+    // Birth month filter (exact match)
+    if (!query.birthMonth && birthMonth) {
+        query.birthMonth = parseBirthMonth(birthMonth.trim());
+    }
+
+    // Price range filter
+    const parsedMinPrice = parsePrice(minPrice);
+    const parsedMaxPrice = parsePrice(maxPrice);
+    if (parsedMinPrice !== null || parsedMaxPrice !== null) {
+        query.price = query.price || {};
+        if (parsedMinPrice !== null) {
+            query.price.$gte = parsedMinPrice;
+        }
+        if (parsedMaxPrice !== null) {
+            query.price.$lte = parsedMaxPrice;
+        }
+        query.contactForPrice = false;
+    }
+
+    // Seller filter (allow overriding base only if not preset)
+    if (!Object.prototype.hasOwnProperty.call(query, 'seller') && seller) {
+        query.seller = seller;
+    }
+
+    // Availability filter
+    const availabilityFilter = parseBoolean(availability);
+    if (!Object.prototype.hasOwnProperty.call(query, 'availability') && availabilityFilter !== undefined) {
+        query.availability = availabilityFilter;
+    }
+
+    // Stock filters (priority: outOfStock > lowStock > inStock)
+    if (!Object.prototype.hasOwnProperty.call(query, 'stock')) {
+        if (outOfStock === 'true') {
+            query.stock = 0;
+        } else if (lowStock === 'true') {
+            query.stock = { $lte: 5, $gt: 0 };
+        } else if (inStock === 'true') {
+            query.stock = { $gt: 0 };
+        }
+    }
+
+    const sortOption = (() => {
+        switch (sort) {
+            case 'oldest':
+                return { createdAt: 1 };
+            case 'price-low':
+                return { contactForPrice: 1, price: 1 };
+            case 'price-high':
+                return { contactForPrice: 1, price: -1 };
+            case 'name':
+                return { name: 1 };
+            case 'newest':
+            default:
+                return { createdAt: -1 };
+        }
+    })();
+
+    return {
+        query,
+        sortOption,
+        page: pageNumber,
+        limit: limitNumber
+    };
+};
+
+const fetchGemsWithFilters = async (queryParams, baseQuery = {}) => {
+    const { query, sortOption, page, limit } = buildGemQueryOptions(queryParams, baseQuery);
+    const skip = (page - 1) * limit;
+
+    const [total, gems] = await Promise.all([
+        Gem.countDocuments(query),
+        Gem.find(query)
+            .populate('seller', 'name email phone')
+            .sort(sortOption)
+            .skip(skip)
+            .limit(limit)
+            .lean()
+    ]);
+
+    const gemsWithSellerInfo = await attachSellerProfiles(gems);
+    const pagination = buildPaginationMeta({ total, page, limit });
+
+    return { gems: gemsWithSellerInfo, pagination };
+};
+
+const handleZodiacListing = async (sign, req, res, baseQueryOverrides = {}) => {
+    try {
+        const normalizedSign = (sign || '').toLowerCase();
+        if (!normalizedSign || !VALID_ZODIAC_SIGNS.includes(normalizedSign)) {
+            return res.status(400).json({
+                success: false,
+                message: `Invalid zodiac sign: ${sign}`
+            });
+        }
+
+        const regex = { $regex: sanitizeRegex(sign), $options: 'i' };
+        const baseQuery = { ...baseQueryOverrides, suitableFor: regex };
+        const { gems, pagination } = await fetchGemsWithFilters(req.query, baseQuery);
+        sendGemResponse(res, gems, pagination);
+    } catch (error) {
+        respondWithError(res, error, 'Error fetching zodiac gems');
+    }
+};
 
 const router = express.Router();
 
@@ -11,12 +351,21 @@ const router = express.Router();
 // @access  Private (Seller)
 router.post('/', protect, checkRole('seller'), [
     body('name').trim().notEmpty().withMessage('Gem name is required'),
-    body('category').trim().notEmpty().withMessage('Category is required'),
+    body('category')
+        .trim()
+        .notEmpty().withMessage('Category is required')
+        .isIn(CATEGORY_LIST).withMessage('Invalid category'),
     body('subcategory').trim().notEmpty().withMessage('Subcategory is required'),
     body('hindiName').trim().notEmpty().withMessage('Hindi name is required'),
-    body('planet').trim().notEmpty().withMessage('Planet is required'),
-    body('planetHindi').trim().notEmpty().withMessage('Planet Hindi is required'),
-    body('color').trim().notEmpty().withMessage('Color is required'),
+    body('planet')
+        .optional({ checkFalsy: true })
+        .isLength({ max: 100 }).withMessage('Planet cannot exceed 100 characters'),
+    body('planetHindi')
+        .optional({ checkFalsy: true })
+        .isLength({ max: 100 }).withMessage('Planet Hindi cannot exceed 100 characters'),
+    body('color')
+        .optional({ checkFalsy: true })
+        .isLength({ max: 100 }).withMessage('Color cannot exceed 100 characters'),
     body('description').trim().notEmpty().withMessage('Description is required'),
     body('benefits').isArray({ min: 1 }).withMessage('At least one benefit is required'),
     body('suitableFor').isArray({ min: 1 }).withMessage('Suitable for information is required'),
@@ -38,12 +387,15 @@ router.post('/', protect, checkRole('seller'), [
             return true;
         }),
     body('sizeWeight').isNumeric().isFloat({ min: 0 }).withMessage('Valid size/weight is required'),
-    body('sizeUnit').isIn(['carat', 'gram', 'ounce', 'ratti']).withMessage('Valid size unit is required'),
+    body('sizeUnit').isIn(['carat', 'gram', 'ratti']).withMessage('Valid size unit is required'),
     body('birthMonth')
         .optional({ nullable: true, checkFalsy: true })
-        .isIn(['January', 'February', 'March', 'April', 'May', 'June',
-            'July', 'August', 'September', 'October', 'November', 'December'])
+        .isIn(VALID_BIRTH_MONTHS)
         .withMessage('Invalid birth month'),
+    body('discountType')
+        .optional({ checkFalsy: true })
+        .isIn(['percentage', 'flat'])
+        .withMessage('Invalid discount type'),
     body('certification').trim().notEmpty().withMessage('Certification is required'),
     body('origin').trim().notEmpty().withMessage('Origin is required'),
     body('deliveryDays').isInt({ min: 1 }).withMessage('Valid delivery days required'),
@@ -96,7 +448,7 @@ router.post('/', protect, checkRole('seller'), [
 
     } catch (error) {
         console.error('Add gem error:', error);
-        
+
         // Handle Mongoose validation errors
         if (error.name === 'ValidationError') {
             const validationErrors = Object.keys(error.errors).map(key => ({
@@ -106,14 +458,14 @@ router.post('/', protect, checkRole('seller'), [
                 path: key,
                 location: 'body'
             }));
-            
+
             return res.status(400).json({
                 success: false,
                 message: 'Validation failed',
                 errors: validationErrors
             });
         }
-        
+
         // Handle other errors
         res.status(500).json({
             success: false,
@@ -127,213 +479,10 @@ router.post('/', protect, checkRole('seller'), [
 // @access  Public
 router.get('/', async (req, res) => {
     try {
-        // Extract query parameters
-        const {
-            page = 1,
-            limit = 12,
-            search = '',
-            category = '',
-            subcategory = '',
-            zodiac = '',
-            planet = '',
-            seller = '',
-            minPrice = '',
-            maxPrice = '',
-            sort = 'newest',
-            availability,
-            inStock,
-            lowStock,
-            outOfStock,
-            birthMonth = ''
-        } = req.query;
-
-        // Build query object
-        let query = {};
-
-        // 1. SEARCH FILTER (searches in name, hindiName, description, planet, color)
-        if (search && search.trim()) {
-            const searchTerm = search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // Sanitize regex special characters
-            query.$or = [
-                { name: { $regex: searchTerm, $options: 'i' } },
-                { hindiName: { $regex: searchTerm, $options: 'i' } },
-                { description: { $regex: searchTerm, $options: 'i' } },
-                { planet: { $regex: searchTerm, $options: 'i' } },
-                { color: { $regex: searchTerm, $options: 'i' } }
-            ];
-        }
-
-        // 2. CATEGORY FILTER (multiple categories comma-separated)
-        if (category) {
-            const categories = category.split(',').map(cat => cat.trim());
-            // Filter by category field (frontend maps Gem Name to this)
-            query.category = { $in: categories };
-        }
-
-        // 2.5. SUBCATEGORY FILTER (single or comma-separated)
-        if (subcategory && subcategory.trim()) {
-            const subcategories = subcategory.split(',').map(sub => sub.trim()).filter(Boolean);
-            if (subcategories.length > 1) {
-                query.subcategory = { $in: subcategories };
-            } else if (subcategories.length === 1) {
-                query.subcategory = { $regex: subcategories[0], $options: 'i' };
-            }
-        }
-
-        // 3. ZODIAC FILTER (searches in suitableFor array)
-        if (zodiac) {
-            query.suitableFor = { $regex: zodiac, $options: 'i' };
-        }
-
-        // 4. PLANET FILTER
-        if (planet) {
-            query.planet = { $regex: planet, $options: 'i' };
-        }
-
-        // 4.5. BIRTH MONTH FILTER
-        if (birthMonth && birthMonth.trim()) {
-            const validMonths = ['January', 'February', 'March', 'April', 'May', 'June',
-                'July', 'August', 'September', 'October', 'November', 'December'];
-            const month = birthMonth.trim();
-            if (validMonths.includes(month)) {
-                query.birthMonth = month;
-            }
-        }
-
-        // 5. PRICE RANGE FILTER
-        if (minPrice || maxPrice) {
-            query.price = {};
-            if (minPrice) query.price.$gte = Number(minPrice);
-            if (maxPrice) query.price.$lte = Number(maxPrice);
-            // Exclude contact-for-price items from numeric price filters
-            query.contactForPrice = false;
-        }
-
-        // 6. SELLER FILTER
-        if (seller) {
-            query.seller = seller;
-        }
-
-        // 7. AVAILABILITY FILTER
-        if (availability !== undefined) {
-            query.availability = availability === 'true';
-        }
-
-        // 8. STOCK FILTERS
-        if (inStock === 'true') {
-            query.stock = { $gt: 0 };
-        }
-        if (lowStock === 'true') {
-            query.stock = { $lte: 5, $gt: 0 };
-        }
-        if (outOfStock === 'true') {
-            query.stock = 0;
-        }
-
-        // 7. BUILD SORT OPTION
-        let sortOption = {};
-        switch (sort) {
-            case 'oldest':
-                sortOption.createdAt = 1; // Ascending (oldest first)
-                break;
-            case 'price-low':
-                // Push contactForPrice items to the end while sorting by price
-                sortOption = { contactForPrice: 1, price: 1 };
-                break;
-            case 'price-high':
-                // Push contactForPrice items to the end while sorting by price
-                sortOption = { contactForPrice: 1, price: -1 };
-                break;
-            case 'name':
-                sortOption.name = 1; // A-Z
-                break;
-            case 'newest':
-            default:
-                sortOption.createdAt = -1; // Descending (newest first)
-                break;
-        }
-
-        // 8. PAGINATION
-        const skip = (Number(page) - 1) * Number(limit);
-        const total = await Gem.countDocuments(query);
-        const totalPages = Math.ceil(total / Number(limit));
-
-        // 9. FETCH GEMS with seller details
-        const Seller = require('../models/Seller');
-        const gems = await Gem.find(query)
-            .populate('seller', 'name email phone')
-            .sort(sortOption)
-            .skip(skip)
-            .limit(Number(limit));
-
-        // 10. Get seller profiles for each gem
-        const gemsWithSellerInfo = await Promise.all(
-            gems.map(async (gem) => {
-                // Check if seller exists
-                if (!gem.seller || !gem.seller._id) {
-                    return {
-                        ...gem.toObject(),
-                        seller: {
-                            _id: null,
-                            fullName: 'Unknown Seller',
-                            shopName: 'Gem Store',
-                            isVerified: false
-                        }
-                    };
-                }
-
-                const sellerProfile = await Seller.findOne({ user: gem.seller._id });
-                return {
-                    ...gem.toObject(),
-                    seller: sellerProfile ? {
-                        _id: sellerProfile._id,
-                        fullName: sellerProfile.fullName,
-                        shopName: sellerProfile.shopName,
-                        isVerified: sellerProfile.isVerified
-                    } : {
-                        _id: gem.seller._id,
-                        fullName: gem.seller.name || 'Seller',
-                        shopName: 'Gem Store',
-                        isVerified: false
-                    }
-                };
-            })
-        );
-
-        // 11. SEND RESPONSE (match frontend expected format)
-        res.json({
-            success: true,
-            data: {
-                gems: gemsWithSellerInfo,
-                pagination: {
-                    currentPage: Number(page),
-                    totalPages,
-                    totalGems: total,
-                    totalItems: total, // Alias for backward compatibility
-                    limit: Number(limit),
-                    hasNext: Number(page) < totalPages,
-                    hasPrev: Number(page) > 1
-                }
-            },
-            // Also include direct properties for backward compatibility
-            gems: gemsWithSellerInfo,
-            pagination: {
-                currentPage: Number(page),
-                totalPages,
-                totalGems: total,
-                totalItems: total,
-                limit: Number(limit),
-                hasNext: Number(page) < totalPages,
-                hasPrev: Number(page) > 1
-            }
-        });
-
+        const { gems, pagination } = await fetchGemsWithFilters(req.query);
+        sendGemResponse(res, gems, pagination);
     } catch (error) {
-        console.error('Get gems error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error fetching gems',
-            error: error.message
-        });
+        respondWithError(res, error, 'Error fetching gems');
     }
 });
 
@@ -342,69 +491,10 @@ router.get('/', async (req, res) => {
 // @access  Public
 router.get('/categories', async (req, res) => {
     try {
-        // Updated categories list (flat array)
-        const categories = [
-            // Navratna
-            'Blue Sapphire (Neelam)',
-            'Yellow Sapphire (Pukhraj)',
-            'Ruby (Manik)',
-            'Emerald (Panna)',
-            'Diamond (Heera)',
-            'Pearl (Moti)',
-            'Cat\'s Eye (Lehsunia)',
-            'Hessonite (Gomed)',
-            'Coral (Moonga)',
-            // Exclusive Gemstones
-            'Alexandrite',
-            'Basra Pearl',
-            'Burma Ruby',
-            'Colombian Emerald',
-            'Cornflower Blue Sapphire',
-            'Kashmir Blue Sapphire',
-            'No-Oil Emerald',
-            'Padparadscha Sapphire',
-            'Panjshir Emerald',
-            'Swat Emerald',
-            'Pigeon Blood Ruby',
-            'Royal Blue Sapphire',
-            // Sapphire
-            'Sapphire',
-            'Bi-Colour Sapphire (Pitambari)',
-            'Blue Sapphire (Neelam)',
-            'Color Change Sapphire',
-            'Green Sapphire',
-            'Pink Sapphire',
-            'Padparadscha Sapphire',
-            'Peach Sapphire',
-            'Purple Sapphire (Khooni Neelam)',
-            'White Sapphire',
-            'Yellow Sapphire (Pukhraj)',
-            // More Vedic Ratna (Upratan)
-            'Amethyst',
-            'Aquamarine',
-            'Blue Topaz',
-            'Citrine Stone (Sunela)',
-            'Tourmaline',
-            'Opal',
-            'Tanzanite',
-            'Iolite (Neeli)',
-            'Jasper (Mahe Mariyam)',
-            'Lapis',
-            // Legacy categories (for backward compatibility)
-            'Emerald',
-            'Ruby',
-            'Pearl',
-            'Red Coral',
-            'Gomed (Hessonite)',
-            'Diamond',
-            'Cat\'s Eye',
-            'Moonstone',
-            'Turquoise'
-        ];
-
         res.json({
             success: true,
-            data: categories
+            data: CATEGORY_LIST,
+            categories: CATEGORY_LIST
         });
 
     } catch (error) {
@@ -416,6 +506,36 @@ router.get('/categories', async (req, res) => {
         });
     }
 });
+
+// @route   GET /api/gems/category/:categoryName
+// @desc    Category landing pages with shared filters/pagination
+// @access  Public
+router.get('/category/:categoryName', async (req, res) => {
+    try {
+        const { categoryName } = req.params;
+        if (!CATEGORY_LIST.includes(categoryName)) {
+            return res.status(400).json({
+                success: false,
+                message: `Invalid category: ${categoryName}`
+            });
+        }
+
+        const { gems, pagination } = await fetchGemsWithFilters(req.query, { category: categoryName });
+        sendGemResponse(res, gems, pagination);
+    } catch (error) {
+        respondWithError(res, error, 'Error fetching category gems');
+    }
+});
+
+// @route   GET /api/gems/zodiac/:sign
+// @desc    Zodiac collections with shared filters/pagination
+// @access  Public
+router.get('/zodiac/:sign', async (req, res) => handleZodiacListing(req.params.sign, req, res));
+
+// Legacy: /filter/zodiac/:zodiacSign still supported (defaults to available gems)
+router.get('/filter/zodiac/:zodiacSign', async (req, res) =>
+    handleZodiacListing(req.params.zodiacSign, req, res, { availability: true })
+);
 
 // @route   GET /api/gems/search-suggestions
 // @desc    Get search suggestions for autocomplete (PUBLIC)
@@ -491,10 +611,8 @@ router.get('/search-suggestions', async (req, res) => {
             if (gem.suitableFor && Array.isArray(gem.suitableFor)) {
                 gem.suitableFor.forEach(zodiac => {
                     const zodiacLower = zodiac.toLowerCase();
-                    const zodiacList = ['aries', 'taurus', 'gemini', 'cancer', 'leo', 'virgo',
-                        'libra', 'scorpio', 'sagittarius', 'capricorn', 'aquarius', 'pisces'];
 
-                    if (zodiacList.includes(zodiacLower) &&
+                    if (VALID_ZODIAC_SIGNS.includes(zodiacLower) &&
                         zodiacLower.includes(searchLower) &&
                         !added.has(zodiacLower)) {
                         suggestions.push({
@@ -622,42 +740,59 @@ router.get('/:id', async (req, res) => {
             relatedProducts = [...relatedProducts, ...additionalProducts];
         }
 
-        // Format related products with seller info (similar to main gem format)
-        const relatedProductsFormatted = await Promise.all(
-            relatedProducts.map(async (relatedGem) => {
-                const relatedSellerProfile = await Seller.findOne({ user: relatedGem.seller._id });
-                return {
-                    _id: relatedGem._id,
-                    name: relatedGem.name,
-                    hindiName: relatedGem.hindiName,
-                    category: relatedGem.category,
-                    subcategory: relatedGem.subcategory,
-                    planet: relatedGem.planet,
-                    color: relatedGem.color,
-                    price: relatedGem.price,
-                    discount: relatedGem.discount,
-                    discountType: relatedGem.discountType,
-                    heroImage: relatedGem.heroImage,
-                    images: relatedGem.images,
-                    stock: relatedGem.stock,
-                    availability: relatedGem.availability,
-                    rating: relatedGem.rating,
-                    reviews: relatedGem.reviews,
-                    seller: relatedSellerProfile ? {
-                        _id: relatedSellerProfile._id,
-                        fullName: relatedSellerProfile.fullName,
-                        shopName: relatedSellerProfile.shopName,
-                        isVerified: relatedSellerProfile.isVerified
-                    } : {
-                        _id: relatedGem.seller._id,
-                        fullName: relatedGem.seller.name || 'Seller',
-                        shopName: 'Gem Store',
-                        isVerified: false
-                    },
-                    createdAt: relatedGem.createdAt
-                };
-            })
+        // Batch fetch seller profiles for related products
+        const relatedSellerUserIds = Array.from(new Set(
+            relatedProducts
+                .map(product => product.seller && product.seller._id ? product.seller._id.toString() : null)
+                .filter(Boolean)
+        ));
+
+        const relatedSellerProfiles = relatedSellerUserIds.length > 0
+            ? await Seller.find({ user: { $in: relatedSellerUserIds } })
+                .select('user fullName shopName isVerified')
+                .lean()
+            : [];
+
+        const relatedSellerProfileMap = new Map(
+            relatedSellerProfiles.map(profile => [profile.user.toString(), profile])
         );
+
+        // Format related products with seller info (similar to main gem format)
+        const relatedProductsFormatted = relatedProducts.map((relatedGem) => {
+            const sellerUserId = relatedGem.seller && relatedGem.seller._id ? relatedGem.seller._id.toString() : null;
+            const relatedSellerProfile = sellerUserId ? relatedSellerProfileMap.get(sellerUserId) : null;
+
+            return {
+                _id: relatedGem._id,
+                name: relatedGem.name,
+                hindiName: relatedGem.hindiName,
+                category: relatedGem.category,
+                subcategory: relatedGem.subcategory,
+                planet: relatedGem.planet,
+                color: relatedGem.color,
+                price: relatedGem.price,
+                discount: relatedGem.discount,
+                discountType: relatedGem.discountType,
+                heroImage: relatedGem.heroImage,
+                images: relatedGem.images,
+                stock: relatedGem.stock,
+                availability: relatedGem.availability,
+                rating: relatedGem.rating,
+                reviews: relatedGem.reviews,
+                seller: relatedSellerProfile ? {
+                    _id: relatedSellerProfile._id,
+                    fullName: relatedSellerProfile.fullName,
+                    shopName: relatedSellerProfile.shopName,
+                    isVerified: relatedSellerProfile.isVerified
+                } : {
+                    _id: relatedGem.seller?._id || null,
+                    fullName: relatedGem.seller?.name || 'Seller',
+                    shopName: 'Gem Store',
+                    isVerified: false
+                },
+                createdAt: relatedGem.createdAt
+            };
+        });
 
         // Build gem response with full seller details
         const gemResponse = {
@@ -704,7 +839,10 @@ router.get('/:id', async (req, res) => {
 // @desc    Update gem (SELLER ONLY - Own gems)
 // @access  Private (Seller)
 router.put('/:id', protect, checkRole('seller'), [
-    body('category').optional().trim().notEmpty().withMessage('Category cannot be empty'),
+    body('category')
+        .optional({ checkFalsy: true })
+        .trim()
+        .isIn(CATEGORY_LIST).withMessage('Invalid category'),
     body('subcategory').optional().trim().notEmpty().withMessage('Subcategory cannot be empty'),
     body('contactForPrice').optional().isBoolean().withMessage('contactForPrice must be a boolean'),
     body('price')
@@ -723,12 +861,15 @@ router.put('/:id', protect, checkRole('seller'), [
             }
             return true;
         }),
-    body('sizeUnit').optional().isIn(['carat', 'gram', 'ounce', 'ratti']).withMessage('Valid size unit is required'),
+    body('sizeUnit').optional().isIn(['carat', 'gram', 'ratti']).withMessage('Valid size unit is required'),
     body('birthMonth')
         .optional({ nullable: true, checkFalsy: true })
-        .isIn(['January', 'February', 'March', 'April', 'May', 'June',
-            'July', 'August', 'September', 'October', 'November', 'December'])
-        .withMessage('Invalid birth month')
+        .isIn(VALID_BIRTH_MONTHS)
+        .withMessage('Invalid birth month'),
+    body('discountType')
+        .optional({ checkFalsy: true })
+        .isIn(['percentage', 'flat'])
+        .withMessage('Invalid discount type')
 ], async (req, res) => {
     try {
         const errors = validationResult(req);
@@ -786,7 +927,7 @@ router.put('/:id', protect, checkRole('seller'), [
 
     } catch (error) {
         console.error('Update gem error:', error);
-        
+
         // Handle Mongoose validation errors
         if (error.name === 'ValidationError') {
             const validationErrors = Object.keys(error.errors).map(key => ({
@@ -796,14 +937,14 @@ router.put('/:id', protect, checkRole('seller'), [
                 path: key,
                 location: 'body'
             }));
-            
+
             return res.status(400).json({
                 success: false,
                 message: 'Validation failed',
                 errors: validationErrors
             });
         }
-        
+
         // Handle cast errors
         if (error.name === 'CastError') {
             return res.status(400).json({
@@ -811,7 +952,7 @@ router.put('/:id', protect, checkRole('seller'), [
                 message: `Invalid ${error.path}: ${error.message}`
             });
         }
-        
+
         // Handle other errors
         res.status(500).json({
             success: false,
@@ -855,50 +996,6 @@ router.delete('/:id', protect, checkRole('seller'), async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Server error during gem deletion'
-        });
-    }
-});
-
-// @route   GET /api/gems/filter/zodiac/:zodiacSign
-// @desc    Get gems by zodiac sign (PUBLIC)
-// @access  Public
-router.get('/filter/zodiac/:zodiacSign', async (req, res) => {
-    try {
-        const { zodiacSign } = req.params;
-        const { page = 1, limit = 12 } = req.query;
-
-        const skip = (parseInt(page) - 1) * parseInt(limit);
-
-        const gems = await Gem.find({
-            suitableFor: { $regex: zodiacSign, $options: 'i' },
-            availability: true
-        })
-            .populate('seller', 'name')
-            .skip(skip)
-            .limit(parseInt(limit))
-            .sort({ createdAt: -1 });
-
-        const count = await Gem.countDocuments({
-            suitableFor: { $regex: zodiacSign, $options: 'i' },
-            availability: true
-        });
-
-        const totalPages = Math.ceil(count / parseInt(limit));
-
-        res.json({
-            success: true,
-            count,
-            totalPages,
-            currentPage: parseInt(page),
-            zodiacSign,
-            gems
-        });
-
-    } catch (error) {
-        console.error('Get gems by zodiac error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Server error during gems retrieval'
         });
     }
 });

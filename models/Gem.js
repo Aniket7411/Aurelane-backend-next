@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { GEM_CATEGORIES, VALID_BIRTH_MONTHS } = require('../constants/gemFilters');
 
 const gemSchema = new mongoose.Schema({
     name: {
@@ -19,19 +20,19 @@ const gemSchema = new mongoose.Schema({
     },
     planet: {
         type: String,
-        required: [true, 'Planet is required'],
+        required: false,
         trim: true,
         maxlength: [100, 'Planet name cannot be more than 100 characters']
     },
     planetHindi: {
         type: String,
-        required: [true, 'Planet Hindi is required'],
+        required: false,
         trim: true,
         maxlength: [100, 'Planet Hindi name cannot be more than 100 characters']
     },
     color: {
         type: String,
-        required: [true, 'Color is required'],
+        required: false,
         trim: true,
         maxlength: [100, 'Color cannot be more than 100 characters']
     },
@@ -61,9 +62,7 @@ const gemSchema = new mongoose.Schema({
                     return true;
                 }
                 // Validate against valid months
-                const validMonths = ['January', 'February', 'March', 'April', 'May', 'June', 
-                                    'July', 'August', 'September', 'October', 'November', 'December'];
-                return validMonths.includes(value);
+                return VALID_BIRTH_MONTHS.includes(value);
             },
             message: 'Invalid birth month. Must be one of: January, February, March, April, May, June, July, August, September, October, November, December, or null'
         }
@@ -72,61 +71,7 @@ const gemSchema = new mongoose.Schema({
         type: String,
         required: [true, 'Category is required'],
         trim: true,
-        enum: [
-            // Navratna
-            'Blue Sapphire (Neelam)',
-            'Yellow Sapphire (Pukhraj)',
-            'Ruby (Manik)',
-            'Emerald (Panna)',
-            'Diamond (Heera)',
-            'Pearl (Moti)',
-            'Cat\'s Eye (Lehsunia)',
-            'Hessonite (Gomed)',
-            'Coral (Moonga)',
-            // Exclusive Gemstones
-            'Alexandrite',
-            'Basra Pearl',
-            'Burma Ruby',
-            'Colombian Emerald',
-            'Cornflower Blue Sapphire',
-            'Kashmir Blue Sapphire',
-            'No-Oil Emerald',
-            'Padparadscha Sapphire',
-            'Panjshir Emerald',
-            'Swat Emerald',
-            'Pigeon Blood Ruby',
-            'Royal Blue Sapphire',
-            // Sapphire
-            'Sapphire',
-            'Bi-Colour Sapphire (Pitambari)',
-            'Color Change Sapphire',
-            'Green Sapphire',
-            'Pink Sapphire',
-            'Peach Sapphire',
-            'Purple Sapphire (Khooni Neelam)',
-            'White Sapphire',
-            // More Vedic Ratna (Upratan)
-            'Amethyst',
-            'Aquamarine',
-            'Blue Topaz',
-            'Citrine Stone (Sunela)',
-            'Tourmaline',
-            'Opal',
-            'Tanzanite',
-            'Iolite (Neeli)',
-            'Jasper (Mahe Mariyam)',
-            'Lapis',
-            // Legacy categories (for backward compatibility)
-            'Emerald',
-            'Ruby',
-            'Pearl',
-            'Red Coral',
-            'Gomed (Hessonite)',
-            'Diamond',
-            'Cat\'s Eye',
-            'Moonstone',
-            'Turquoise'
-        ]
+        enum: GEM_CATEGORIES
     },
     subcategory: {
         type: String,
@@ -147,8 +92,7 @@ const gemSchema = new mongoose.Schema({
     },
     contactForPrice: {
         type: Boolean,
-        default: false,
-        required: [true, 'contactForPrice is required']
+        default: false
     },
     discount: {
         type: Number,
@@ -157,7 +101,7 @@ const gemSchema = new mongoose.Schema({
     },
     discountType: {
         type: String,
-        enum: ['percentage', 'fixed'],
+        enum: ['percentage', 'flat'],
         default: 'percentage'
     },
     sizeWeight: {
@@ -168,7 +112,7 @@ const gemSchema = new mongoose.Schema({
     sizeUnit: {
         type: String,
         required: [true, 'Size unit is required'],
-        enum: ['carat', 'gram', 'ounce', 'ratti'],
+        enum: ['carat', 'gram', 'ratti'],
         default: 'carat'
     },
     stock: {
