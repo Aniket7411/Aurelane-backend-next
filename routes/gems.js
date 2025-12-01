@@ -309,9 +309,13 @@ const fetchGemsWithFilters = async (queryParams, baseQuery = {}) => {
     const { query, sortOption, page, limit } = buildGemQueryOptions(queryParams, baseQuery);
     const skip = (page - 1) * limit;
 
+    // Select only needed fields to reduce data transfer
+    const selectFields = '_id name hindiName category subcategory price discount discountType sizeWeight sizeUnit stock availability certification origin deliveryDays heroImage allImages images additionalImages contactForPrice birthMonth planet planetHindi color description benefits suitableFor createdAt seller rating reviews';
+
     const [total, gems] = await Promise.all([
         Gem.countDocuments(query),
         Gem.find(query)
+            .select(selectFields)
             .populate('seller', 'name email phone')
             .sort(sortOption)
             .skip(skip)
@@ -343,6 +347,11 @@ const handleZodiacListing = async (sign, req, res, baseQueryOverrides = {}) => {
         respondWithError(res, error, 'Error fetching zodiac gems');
     }
 };
+
+// Simple in-memory cache for categories (10 minute TTL)
+let categoriesCache = null;
+let categoriesCacheTime = null;
+const CATEGORIES_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 
 const router = express.Router();
 
@@ -487,15 +496,26 @@ router.get('/', async (req, res) => {
 });
 
 // @route   GET /api/gems/categories
-// @desc    Get predefined gem categories (PUBLIC)
+// @desc    Get predefined gem categories (PUBLIC) - Cached
 // @access  Public
 router.get('/categories', async (req, res) => {
     try {
-        res.json({
+        // Return cached categories if still valid
+        const now = Date.now();
+        if (categoriesCache && categoriesCacheTime && (now - categoriesCacheTime) < CATEGORIES_CACHE_TTL) {
+            return res.json(categoriesCache);
+        }
+
+        // Update cache
+        const response = {
             success: true,
             data: CATEGORY_LIST,
             categories: CATEGORY_LIST
-        });
+        };
+        categoriesCache = response;
+        categoriesCacheTime = now;
+
+        res.json(response);
 
     } catch (error) {
         console.error('Get categories error:', error);
@@ -554,6 +574,7 @@ router.get('/search-suggestions', async (req, res) => {
         const sanitizedSearch = searchTerm.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
         // Search in name, hindiName, planet, color, and suitableFor (optimized for autocomplete)
+        // Use compound index (availability: 1, name: 1) for better performance
         const gems = await Gem.find({
             $or: [
                 { name: { $regex: sanitizedSearch, $options: 'i' } },
@@ -563,7 +584,7 @@ router.get('/search-suggestions', async (req, res) => {
             ],
             availability: true
         })
-            .select('name hindiName planet color suitableFor category subcategory')
+            .select('name hindiName planet color suitableFor category subcategory _id')
             .limit(10)
             .lean(); // Use lean() for better performance
 
@@ -647,7 +668,9 @@ router.get('/search-suggestions', async (req, res) => {
 router.get('/my-gems', protect, checkRole('seller'), async (req, res) => {
     try {
         const gems = await Gem.find({ seller: req.user._id })
-            .sort({ createdAt: -1 });
+            .select('_id name hindiName category subcategory price discount discountType sizeWeight sizeUnit stock availability heroImage allImages contactForPrice createdAt')
+            .sort({ createdAt: -1 })
+            .lean();
 
         res.json({
             success: true,
@@ -679,9 +702,10 @@ router.get('/:id', async (req, res) => {
             });
         }
 
-        // Fetch gem with basic seller info
+        // Fetch gem with basic seller info - use lean() for better performance
         const gem = await Gem.findById(id)
-            .populate('seller', 'name email phone');
+            .populate('seller', 'name email phone')
+            .lean();
 
         if (!gem) {
             return res.status(404).json({
@@ -692,7 +716,8 @@ router.get('/:id', async (req, res) => {
 
         // Get full seller profile
         const Seller = require('../models/Seller');
-        const sellerProfile = await Seller.findOne({ user: gem.seller._id });
+        const sellerProfile = await Seller.findOne({ user: gem.seller._id })
+            .lean();
 
         // Fetch related products
         // Priority: 1. Same name, 2. Same planet, 3. Same color, 4. Similar price range
@@ -710,7 +735,10 @@ router.get('/:id', async (req, res) => {
             priceCriteria = { price: { $gte: minPrice, $lte: maxPrice } };
         }
 
-        // Try to find related products with multiple criteria
+        // Select only needed fields for related products
+        const relatedSelectFields = '_id name hindiName category subcategory planet color price discount discountType heroImage images stock availability rating reviews seller createdAt';
+
+        // Try to find related products with multiple criteria - optimized query
         let relatedProducts = await Gem.find({
             ...relatedProductsQuery,
             $or: [
@@ -721,6 +749,7 @@ router.get('/:id', async (req, res) => {
                 ...(priceCriteria ? [priceCriteria] : [])
             ]
         })
+            .select(relatedSelectFields)
             .populate('seller', 'name email phone')
             .sort({ createdAt: -1 })
             .limit(8)
@@ -728,10 +757,12 @@ router.get('/:id', async (req, res) => {
 
         // If we don't have enough related products, fill with any available gems
         if (relatedProducts.length < 6) {
+            const excludeIds = [...relatedProducts.map(p => p._id), gem._id];
             const additionalProducts = await Gem.find({
                 ...relatedProductsQuery,
-                _id: { $nin: [...relatedProducts.map(p => p._id), gem._id] }
+                _id: { $nin: excludeIds }
             })
+                .select(relatedSelectFields)
                 .populate('seller', 'name email phone')
                 .sort({ createdAt: -1 })
                 .limit(8 - relatedProducts.length)
@@ -796,7 +827,7 @@ router.get('/:id', async (req, res) => {
 
         // Build gem response with full seller details
         const gemResponse = {
-            ...gem.toObject(),
+            ...gem,
             seller: sellerProfile ? {
                 _id: sellerProfile._id,
                 fullName: sellerProfile.fullName,
@@ -1006,41 +1037,24 @@ router.delete('/:id', protect, checkRole('seller'), async (req, res) => {
 router.get('/filter/planet/:planet', async (req, res) => {
     try {
         const { planet } = req.params;
-        const { page = 1, limit = 12 } = req.query;
-
-        const skip = (parseInt(page) - 1) * parseInt(limit);
-
-        const gems = await Gem.find({
-            planet: { $regex: planet, $options: 'i' },
-            availability: true
-        })
-            .populate('seller', 'name')
-            .skip(skip)
-            .limit(parseInt(limit))
-            .sort({ createdAt: -1 });
-
-        const count = await Gem.countDocuments({
-            planet: { $regex: planet, $options: 'i' },
-            availability: true
-        });
-
-        const totalPages = Math.ceil(count / parseInt(limit));
+        const { gems, pagination } = await fetchGemsWithFilters(
+            req.query,
+            { planet: { $regex: sanitizeRegex(planet), $options: 'i' }, availability: true }
+        );
 
         res.json({
             success: true,
-            count,
-            totalPages,
-            currentPage: parseInt(page),
+            count: pagination.totalItems,
+            totalPages: pagination.totalPages,
+            currentPage: pagination.currentPage,
             planet,
-            gems
+            gems,
+            pagination
         });
 
     } catch (error) {
         console.error('Get gems by planet error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Server error during gems retrieval'
-        });
+        respondWithError(res, error, 'Server error during gems retrieval');
     }
 });
 

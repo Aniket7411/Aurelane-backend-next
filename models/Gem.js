@@ -264,11 +264,20 @@ gemSchema.index({ seller: 1 }); // Seller filter
 gemSchema.index({ createdAt: -1 }); // Newest first sorting
 gemSchema.index({ stock: 1 }); // Stock filter
 gemSchema.index({ subcategory: 1 }); // Subcategory filter
+gemSchema.index({ category: 1 }); // Category filter
+gemSchema.index({ birthMonth: 1 }); // Birth month filter
 
 // Compound indexes for common query patterns
 gemSchema.index({ availability: 1, name: 1 }); // Available gems by name
 gemSchema.index({ availability: 1, price: 1 }); // Available gems by price
 gemSchema.index({ availability: 1, planet: 1 }); // Available gems by planet
 gemSchema.index({ category: 1, subcategory: 1 }); // Category/subcategory lookup
+gemSchema.index({ category: 1, availability: 1, price: 1 }); // Category filtering with price sort
+gemSchema.index({ category: 1, availability: 1, createdAt: -1 }); // Category filtering with newest sort
+gemSchema.index({ category: 1, availability: 1 }); // Category + availability filter
+gemSchema.index({ birthMonth: 1, availability: 1 }); // Birth month filtering
+gemSchema.index({ suitableFor: 1, availability: 1 }); // Zodiac/suitableFor filtering
+gemSchema.index({ contactForPrice: 1, price: 1 }); // Price sorting with contactForPrice
+gemSchema.index({ seller: 1, availability: 1, createdAt: -1 }); // Seller's gems
 
 module.exports = mongoose.model('Gem', gemSchema);
