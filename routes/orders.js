@@ -46,10 +46,6 @@ router.post('/', protect, checkRole('buyer'), [
                     throw new Error(`${gem.name} is not available or insufficient stock`);
                 }
 
-                // Update gem stock
-                gem.stock -= item.quantity;
-                await gem.save();
-
                 return {
                     gem: item.gem,
                     quantity: item.quantity,
@@ -58,6 +54,18 @@ router.post('/', protect, checkRole('buyer'), [
                 };
             })
         );
+
+        // Reduce stock for COD orders (immediate stock reduction)
+        if (paymentMethod === 'COD') {
+            for (const item of orderItems) {
+                await Gem.findByIdAndUpdate(item.gem, {
+                    $inc: {
+                        stock: -item.quantity,
+                        sales: item.quantity
+                    }
+                });
+            }
+        }
 
         // Create order
         const order = new Order({
@@ -97,6 +105,64 @@ router.post('/', protect, checkRole('buyer'), [
     }
 });
 
+// @route   GET /api/orders
+// @desc    Get buyer's orders - alias for /my-orders (BUYER ONLY)
+// @access  Private (Buyer)
+router.get('/', protect, checkRole('buyer'), async (req, res) => {
+    // Redirect to my-orders logic
+    const { page = 1, limit = 10, status } = req.query;
+
+    const filter = { user: req.user._id };
+    if (status) filter.status = status;
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    try {
+        const orders = await Order.find(filter)
+            .populate('items.gem', 'name hindiName heroImage sizeWeight sizeUnit category subcategory')
+            .skip(skip)
+            .limit(parseInt(limit))
+            .sort({ createdAt: -1 });
+
+        const count = await Order.countDocuments(filter);
+
+        // Format orders with expected delivery dates
+        const formattedOrders = orders.map(order => {
+            const deliveryDays = order.items[0]?.gem?.deliveryDays || 7;
+            const expectedDelivery = new Date(order.createdAt);
+            expectedDelivery.setDate(expectedDelivery.getDate() + deliveryDays);
+
+            return {
+                _id: order._id,
+                orderNumber: order.orderNumber,
+                orderDate: order.createdAt,
+                status: order.status,
+                paymentStatus: order.paymentStatus,
+                paymentMethod: order.paymentMethod,
+                totalAmount: order.totalPrice,
+                deliveryDays,
+                expectedDelivery,
+                items: order.items,
+                shippingAddress: order.shippingAddress,
+                createdAt: order.createdAt
+            };
+        });
+
+        res.json({
+            success: true,
+            count,
+            orders: formattedOrders
+        });
+
+    } catch (error) {
+        console.error('Get orders error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error during orders retrieval'
+        });
+    }
+});
+
 // @route   GET /api/orders/my-orders
 // @desc    Get buyer's orders (BUYER ONLY)
 // @access  Private (Buyer)
@@ -128,6 +194,8 @@ router.get('/my-orders', protect, checkRole('buyer'), async (req, res) => {
                 orderNumber: order.orderNumber,
                 orderDate: order.createdAt,
                 status: order.status,
+                paymentStatus: order.paymentStatus,
+                paymentMethod: order.paymentMethod,
                 totalAmount: order.totalPrice,
                 deliveryDays,
                 expectedDelivery,

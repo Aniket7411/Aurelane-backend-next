@@ -3,8 +3,9 @@ const mongoose = require('mongoose');
 const orderSchema = new mongoose.Schema({
     orderNumber: {
         type: String,
-        required: true,
-        unique: true
+        required: false, // Will be auto-generated in pre-save hook
+        unique: true,
+        sparse: true // Allow multiple null values (before order number is generated)
     },
     user: {
         type: mongoose.Schema.Types.ObjectId,
@@ -84,8 +85,20 @@ const orderSchema = new mongoose.Schema({
     },
     paymentStatus: {
         type: String,
-        enum: ['pending', 'completed', 'failed'],
+        enum: ['pending', 'completed', 'failed', 'refunded'],
         default: 'pending'
+    },
+    razorpayOrderId: {
+        type: String,
+        trim: true
+    },
+    razorpayPaymentId: {
+        type: String,
+        trim: true
+    },
+    razorpaySignature: {
+        type: String,
+        trim: true
     },
     totalPrice: {
         type: Number,
@@ -114,26 +127,20 @@ const orderSchema = new mongoose.Schema({
 
 // Generate order number and reduce stock before saving
 orderSchema.pre('save', async function (next) {
-    // Generate order number
-    if (!this.orderNumber) {
-        const count = await mongoose.model('Order').countDocuments();
-        this.orderNumber = `ORD-${new Date().getFullYear()}-${String(count + 1).padStart(3, '0')}`;
-    }
-
-    // Reduce stock when order is created
-    if (this.isNew) {
-        const Gem = mongoose.model('Gem');
-        for (const item of this.items) {
-            await Gem.findByIdAndUpdate(item.gem, {
-                $inc: {
-                    stock: -item.quantity,
-                    sales: item.quantity
-                }
-            });
+    try {
+        // Generate order number if not already set
+        if (!this.orderNumber) {
+            const count = await mongoose.model('Order').countDocuments();
+            this.orderNumber = `ORD-${new Date().getFullYear()}-${String(count + 1).padStart(6, '0')}`;
         }
-    }
 
-    next();
+        // Note: Stock reduction is handled in payment verification, not here
+        // This prevents stock reduction for pending payments
+        
+        next();
+    } catch (error) {
+        next(error);
+    }
 });
 
 // Method to restore stock on cancellation

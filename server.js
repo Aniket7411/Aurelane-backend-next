@@ -16,6 +16,7 @@ const sellerRoutes = require('./routes/seller');
 const userRoutes = require('./routes/user');
 const wishlistRoutes = require('./routes/wishlist');
 const reviewRoutes = require('./routes/reviews');
+const paymentRoutes = require('./routes/payments');
 
 const app = express();
 
@@ -175,6 +176,7 @@ app.use('/api/seller', sellerRoutes);
 app.use('/api/user', userRoutes);
 app.use('/api/wishlist', wishlistRoutes);
 app.use('/api/reviews', reviewRoutes);
+app.use('/api/payments', paymentRoutes);
 
 console.log("testing");
 
