@@ -221,17 +221,290 @@ router.get('/my-orders', protect, checkRole('buyer'), async (req, res) => {
 });
 
 // @route   GET /api/orders/seller/orders
-// @desc    Get seller's orders (SELLER ONLY)
+// @desc    Get seller's orders with filters (SELLER ONLY)
 // @access  Private (Seller)
 router.get('/seller/orders', protect, checkRole('seller'), async (req, res) => {
     try {
-        const orders = await Order.find({ 'items.seller': req.user._id })
-            .populate('user', 'name email phone')
-            .populate('items.gem', 'name category subcategory')
-            .sort({ createdAt: -1 });
+        const { page = 1, limit = 20, status, paymentStatus } = req.query;
 
-        // Format orders with buyer information
-        const formattedOrders = orders.map(order => ({
+        // Build filter - only orders where seller has items
+        const filter = { 'items.seller': req.user._id };
+        if (status) filter.status = status;
+        if (paymentStatus) filter.paymentStatus = paymentStatus;
+
+        const skip = (parseInt(page) - 1) * parseInt(limit);
+
+        const orders = await Order.find(filter)
+            .populate('user', 'name email phone')
+            .populate('items.gem', 'name category subcategory heroImage price stock sizeWeight sizeUnit')
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(parseInt(limit));
+
+        // Filter items to only show seller's items
+        const formattedOrders = orders.map(order => {
+            // Filter items to only this seller's items
+            const sellerItems = order.items.filter(item =>
+                item.seller.toString() === req.user._id.toString()
+            );
+
+            // Calculate total for seller's items only
+            const sellerTotal = sellerItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+
+            return {
+                _id: order._id,
+                orderNumber: order.orderNumber,
+                buyer: {
+                    _id: order.user._id,
+                    name: order.user.name,
+                    email: order.user.email,
+                    phone: order.user.phone || order.shippingAddress.phone
+                },
+                items: sellerItems.map(item => ({
+                    _id: item._id,
+                    gem: item.gem,
+                    quantity: item.quantity,
+                    price: item.price,
+                    subtotal: item.price * item.quantity
+                })),
+                totalPrice: sellerTotal,
+                status: order.status,
+                paymentStatus: order.paymentStatus,
+                paymentMethod: order.paymentMethod,
+                shippingAddress: order.shippingAddress,
+                trackingNumber: order.trackingNumber || null,
+                createdAt: order.createdAt,
+                updatedAt: order.updatedAt
+            };
+        });
+
+        const count = await Order.countDocuments(filter);
+
+        res.json({
+            success: true,
+            count: formattedOrders.length,
+            total: count,
+            orders: formattedOrders,
+            pagination: {
+                currentPage: parseInt(page),
+                limit: parseInt(limit),
+                totalPages: Math.ceil(count / parseInt(limit)),
+                total: count
+            }
+        });
+
+    } catch (error) {
+        console.error('Get seller orders error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error during orders retrieval'
+        });
+    }
+});
+
+// @route   GET /api/orders/seller/orders/stats
+// @desc    Get seller order statistics (SELLER ONLY)
+// @access  Private (Seller)
+router.get('/seller/orders/stats', protect, checkRole('seller'), async (req, res) => {
+    try {
+        // Get all orders containing seller's items
+        const orders = await Order.find({ 'items.seller': req.user._id })
+            .select('items status totalPrice paymentStatus');
+
+        // Initialize stats
+        const stats = {
+            totalOrders: 0,
+            pendingOrders: 0,
+            processingOrders: 0,
+            shippedOrders: 0,
+            deliveredOrders: 0,
+            cancelledOrders: 0,
+            totalRevenue: 0,
+            pendingRevenue: 0,
+            completedRevenue: 0
+        };
+
+        // Calculate statistics
+        orders.forEach(order => {
+            // Filter to only seller's items
+            const sellerItems = order.items.filter(item =>
+                item.seller.toString() === req.user._id.toString()
+            );
+
+            // Calculate revenue for seller's items only
+            const orderRevenue = sellerItems.reduce((sum, item) =>
+                sum + (item.price * item.quantity), 0
+            );
+
+            // Update counts
+            stats.totalOrders++;
+            switch (order.status) {
+                case 'pending':
+                    stats.pendingOrders++;
+                    stats.pendingRevenue += orderRevenue;
+                    break;
+                case 'processing':
+                    stats.processingOrders++;
+                    break;
+                case 'shipped':
+                    stats.shippedOrders++;
+                    break;
+                case 'delivered':
+                    stats.deliveredOrders++;
+                    stats.completedRevenue += orderRevenue;
+                    break;
+                case 'cancelled':
+                    stats.cancelledOrders++;
+                    break;
+            }
+
+            // Add to total revenue
+            stats.totalRevenue += orderRevenue;
+        });
+
+        res.json({
+            success: true,
+            stats
+        });
+
+    } catch (error) {
+        console.error('Get seller order stats error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error during statistics retrieval'
+        });
+    }
+});
+
+// @route   GET /api/orders/seller/orders/stats
+// @desc    Get seller order statistics (SELLER ONLY)
+// @access  Private (Seller)
+// NOTE: This route must come BEFORE /seller/orders/:orderId to avoid route conflicts
+router.get('/seller/orders/stats', protect, checkRole('seller'), async (req, res) => {
+    try {
+        // Get all orders containing seller's items
+        const orders = await Order.find({ 'items.seller': req.user._id })
+            .select('items status totalPrice paymentStatus');
+
+        // Initialize stats
+        const stats = {
+            totalOrders: 0,
+            pendingOrders: 0,
+            processingOrders: 0,
+            shippedOrders: 0,
+            deliveredOrders: 0,
+            cancelledOrders: 0,
+            totalRevenue: 0,
+            pendingRevenue: 0,
+            completedRevenue: 0
+        };
+
+        // Calculate statistics
+        orders.forEach(order => {
+            // Filter to only seller's items
+            const sellerItems = order.items.filter(item =>
+                item.seller.toString() === req.user._id.toString()
+            );
+
+            // Calculate revenue for seller's items only
+            const orderRevenue = sellerItems.reduce((sum, item) =>
+                sum + (item.price * item.quantity), 0
+            );
+
+            // Update counts
+            stats.totalOrders++;
+            switch (order.status) {
+                case 'pending':
+                    stats.pendingOrders++;
+                    stats.pendingRevenue += orderRevenue;
+                    break;
+                case 'processing':
+                    stats.processingOrders++;
+                    break;
+                case 'shipped':
+                    stats.shippedOrders++;
+                    break;
+                case 'delivered':
+                    stats.deliveredOrders++;
+                    stats.completedRevenue += orderRevenue;
+                    break;
+                case 'cancelled':
+                    stats.cancelledOrders++;
+                    break;
+            }
+
+            // Add to total revenue
+            stats.totalRevenue += orderRevenue;
+        });
+
+        res.json({
+            success: true,
+            stats
+        });
+
+    } catch (error) {
+        console.error('Get seller order stats error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error during statistics retrieval'
+        });
+    }
+});
+
+// @route   GET /api/orders/seller/orders/:orderId
+// @desc    Get seller order by ID (SELLER ONLY)
+// @access  Private (Seller)
+router.get('/seller/orders/:orderId', protect, checkRole('seller'), async (req, res) => {
+    try {
+        const order = await Order.findById(req.params.orderId)
+            .populate('user', 'name email phone')
+            .populate('items.gem', 'name category subcategory heroImage images price stock sizeWeight sizeUnit');
+
+        if (!order) {
+            return res.status(404).json({
+                success: false,
+                message: 'Order not found',
+                error: {
+                    code: 'ORDER_NOT_FOUND',
+                    description: 'Order does not exist or does not contain seller\'s items'
+                }
+            });
+        }
+
+        // Check if seller has items in this order
+        const sellerItems = order.items.filter(item =>
+            item.seller.toString() === req.user._id.toString()
+        );
+
+        if (sellerItems.length === 0) {
+            return res.status(403).json({
+                success: false,
+                message: 'Access denied. This order does not contain your items.',
+                error: {
+                    code: 'FORBIDDEN',
+                    description: 'Seller can only access orders containing their items'
+                }
+            });
+        }
+
+        // Calculate total for seller's items only
+        const sellerTotal = sellerItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+
+        // Build status history (simplified - can be enhanced with actual history tracking)
+        const statusHistory = [
+            {
+                status: order.status,
+                timestamp: order.updatedAt || order.createdAt
+            }
+        ];
+        if (order.status !== 'pending') {
+            statusHistory.unshift({
+                status: 'pending',
+                timestamp: order.createdAt
+            });
+        }
+
+        const orderData = {
             _id: order._id,
             orderNumber: order.orderNumber,
             buyer: {
@@ -240,24 +513,45 @@ router.get('/seller/orders', protect, checkRole('seller'), async (req, res) => {
                 email: order.user.email,
                 phone: order.user.phone || order.shippingAddress.phone
             },
-            items: order.items,
-            totalPrice: order.totalPrice,
+            items: sellerItems.map(item => ({
+                _id: item._id,
+                gem: {
+                    _id: item.gem._id,
+                    name: item.gem.name,
+                    category: item.gem.category,
+                    subcategory: item.gem.subcategory,
+                    heroImage: item.gem.heroImage,
+                    images: item.gem.images || item.gem.allImages || [],
+                    price: item.gem.price,
+                    stock: item.gem.stock,
+                    sizeWeight: item.gem.sizeWeight,
+                    sizeUnit: item.gem.sizeUnit
+                },
+                quantity: item.quantity,
+                price: item.price,
+                subtotal: item.price * item.quantity
+            })),
+            totalPrice: sellerTotal,
             status: order.status,
+            paymentStatus: order.paymentStatus,
+            paymentMethod: order.paymentMethod,
             shippingAddress: order.shippingAddress,
-            createdAt: order.createdAt
-        }));
+            trackingNumber: order.trackingNumber || null,
+            statusHistory,
+            createdAt: order.createdAt,
+            updatedAt: order.updatedAt
+        };
 
         res.json({
             success: true,
-            count: formattedOrders.length,
-            orders: formattedOrders
+            order: orderData
         });
 
     } catch (error) {
-        console.error('Get seller orders error:', error);
+        console.error('Get seller order by ID error:', error);
         res.status(500).json({
             success: false,
-            message: 'Server error during orders retrieval'
+            message: 'Server error during order retrieval'
         });
     }
 });
@@ -372,7 +666,8 @@ router.put('/:id/cancel', protect, checkRole('buyer'), async (req, res) => {
 router.put('/:id/status', protect, checkRole('seller'), [
     body('status')
         .isIn(['pending', 'processing', 'shipped', 'delivered', 'cancelled'])
-        .withMessage('Valid status is required')
+        .withMessage('Valid status is required'),
+    body('trackingNumber').optional().isString().withMessage('Tracking number must be a string')
 ], async (req, res) => {
     try {
         const errors = validationResult(req);
@@ -380,18 +675,27 @@ router.put('/:id/status', protect, checkRole('seller'), [
             return res.status(400).json({
                 success: false,
                 message: 'Validation failed',
+                error: {
+                    code: 'VALIDATION_ERROR',
+                    description: errors.array()[0].msg
+                },
                 errors: errors.array()
             });
         }
 
-        const { status } = req.body;
+        const { status, trackingNumber } = req.body;
 
-        const order = await Order.findById(req.params.id);
+        const order = await Order.findById(req.params.id)
+            .populate('items.gem', 'name stock');
 
         if (!order) {
             return res.status(404).json({
                 success: false,
-                message: 'Order not found'
+                message: 'Order not found',
+                error: {
+                    code: 'ORDER_NOT_FOUND',
+                    description: 'Order does not exist'
+                }
             });
         }
 
@@ -401,11 +705,73 @@ router.put('/:id/status', protect, checkRole('seller'), [
         if (!hasSellerId) {
             return res.status(403).json({
                 success: false,
-                message: 'Not authorized to update this order'
+                message: 'Access denied. This order does not contain your items.',
+                error: {
+                    code: 'FORBIDDEN',
+                    description: 'Seller can only update orders containing their items'
+                }
             });
         }
 
+        // Validate status transitions (sellers cannot set to delivered)
+        if (status === 'delivered') {
+            return res.status(403).json({
+                success: false,
+                message: 'Access denied. Only admin can mark orders as delivered.',
+                error: {
+                    code: 'FORBIDDEN',
+                    description: 'Sellers cannot update order status to delivered'
+                }
+            });
+        }
+
+        // Check if order is in final state
+        if (['delivered', 'cancelled'].includes(order.status)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid status transition',
+                error: {
+                    code: 'INVALID_TRANSITION',
+                    description: `Cannot update order that is already ${order.status}`
+                }
+            });
+        }
+
+        // Validate status transitions
+        const validTransitions = {
+            'pending': ['processing', 'cancelled'],
+            'processing': ['shipped', 'cancelled'],
+            'shipped': [] // Sellers cannot change shipped status
+        };
+
+        if (validTransitions[order.status] && !validTransitions[order.status].includes(status)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid status transition',
+                error: {
+                    code: 'INVALID_TRANSITION',
+                    description: `Cannot transition from '${order.status}' to '${status}'`
+                }
+            });
+        }
+
+        // Validate tracking number for shipped status
+        if (status === 'shipped' && !trackingNumber) {
+            return res.status(400).json({
+                success: false,
+                message: 'Tracking number is required when status is \'shipped\'',
+                error: {
+                    code: 'VALIDATION_ERROR',
+                    description: 'trackingNumber field is required for shipped status'
+                }
+            });
+        }
+
+        // Update order status
         order.status = status;
+        if (trackingNumber) {
+            order.trackingNumber = trackingNumber;
+        }
         await order.save();
 
         res.json({
@@ -414,7 +780,9 @@ router.put('/:id/status', protect, checkRole('seller'), [
             order: {
                 _id: order._id,
                 orderNumber: order.orderNumber,
-                status: order.status
+                status: order.status,
+                trackingNumber: order.trackingNumber,
+                updatedAt: order.updatedAt
             }
         });
 
