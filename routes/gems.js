@@ -457,7 +457,7 @@ router.post('/', protect, checkRole('seller'), [
 
     } catch (error) {
         console.error('Add gem error:', error);
-
+        
         // Handle Mongoose validation errors
         if (error.name === 'ValidationError') {
             const validationErrors = Object.keys(error.errors).map(key => ({
@@ -467,14 +467,14 @@ router.post('/', protect, checkRole('seller'), [
                 path: key,
                 location: 'body'
             }));
-
+            
             return res.status(400).json({
                 success: false,
                 message: 'Validation failed',
                 errors: validationErrors
             });
         }
-
+        
         // Handle other errors
         res.status(500).json({
             success: false,
@@ -683,6 +683,56 @@ router.get('/my-gems', protect, checkRole('seller'), async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Server error during gems retrieval'
+        });
+    }
+});
+
+// @route   GET /api/gems/edit/:id
+// @desc    Get gem for editing (SELLER ONLY - Own gems)
+// @access  Private (Seller)
+// NOTE: This route must come BEFORE /:id to avoid route conflicts
+router.get('/edit/:id', protect, checkRole('seller'), async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // Validate MongoDB ObjectID
+        if (!id.match(/^[0-9a-fA-F]{24}$/)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid gem ID format'
+            });
+        }
+
+        // Find gem
+        const gem = await Gem.findById(id);
+
+        if (!gem) {
+            return res.status(404).json({
+                success: false,
+                message: 'Gem not found'
+            });
+        }
+
+        // Check if user owns this gem
+        if (gem.seller.toString() !== req.user._id.toString()) {
+            return res.status(403).json({
+                success: false,
+                message: 'Not authorized to edit this gem'
+            });
+        }
+
+        // Return gem data for editing
+        res.json({
+            success: true,
+            gem: gem
+        });
+
+    } catch (error) {
+        console.error('Get gem for edit error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error during gem retrieval',
+            error: error.message
         });
     }
 });
@@ -958,7 +1008,7 @@ router.put('/:id', protect, checkRole('seller'), [
 
     } catch (error) {
         console.error('Update gem error:', error);
-
+        
         // Handle Mongoose validation errors
         if (error.name === 'ValidationError') {
             const validationErrors = Object.keys(error.errors).map(key => ({
@@ -968,14 +1018,14 @@ router.put('/:id', protect, checkRole('seller'), [
                 path: key,
                 location: 'body'
             }));
-
+            
             return res.status(400).json({
                 success: false,
                 message: 'Validation failed',
                 errors: validationErrors
             });
         }
-
+        
         // Handle cast errors
         if (error.name === 'CastError') {
             return res.status(400).json({
@@ -983,7 +1033,7 @@ router.put('/:id', protect, checkRole('seller'), [
                 message: `Invalid ${error.path}: ${error.message}`
             });
         }
-
+        
         // Handle other errors
         res.status(500).json({
             success: false,
