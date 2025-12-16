@@ -104,6 +104,13 @@ const gemSchema = new mongoose.Schema({
         enum: ['percentage', 'flat'],
         default: 'percentage'
     },
+    gstCategory: {
+        type: String,
+        required: false, // Made optional for backward compatibility with existing gems
+        enum: ['rough_unworked', 'cut_polished', 'rough_diamonds', 'cut_diamonds'],
+        trim: true,
+        default: null
+    },
     sizeWeight: {
         type: Number,
         required: [true, 'Size/Weight is required'],

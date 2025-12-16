@@ -310,7 +310,7 @@ const fetchGemsWithFilters = async (queryParams, baseQuery = {}) => {
     const skip = (page - 1) * limit;
 
     // Select only needed fields to reduce data transfer
-    const selectFields = '_id name hindiName category subcategory price discount discountType sizeWeight sizeUnit stock availability certification origin deliveryDays heroImage allImages images additionalImages contactForPrice birthMonth planet planetHindi color description benefits suitableFor createdAt seller rating reviews';
+    const selectFields = '_id name hindiName category subcategory price discount discountType sizeWeight sizeUnit stock availability certification origin deliveryDays heroImage allImages images additionalImages contactForPrice birthMonth planet planetHindi color description benefits suitableFor gstCategory createdAt seller rating reviews';
 
     const [total, gems] = await Promise.all([
         Gem.countDocuments(query),
@@ -405,6 +405,11 @@ router.post('/', protect, checkRole('seller'), [
         .optional({ checkFalsy: true })
         .isIn(['percentage', 'flat'])
         .withMessage('Invalid discount type'),
+    body('gstCategory')
+        .optional({ checkFalsy: true })
+        .trim()
+        .isIn(['rough_unworked', 'cut_polished', 'rough_diamonds', 'cut_diamonds'])
+        .withMessage('Invalid GST category. Must be one of: rough_unworked, cut_polished, rough_diamonds, cut_diamonds'),
     body('certification').trim().notEmpty().withMessage('Certification is required'),
     body('origin').trim().notEmpty().withMessage('Origin is required'),
     body('deliveryDays').isInt({ min: 1 }).withMessage('Valid delivery days required'),
@@ -449,6 +454,7 @@ router.post('/', protect, checkRole('seller'), [
                 subcategory: gem.subcategory,
                 contactForPrice: gem.contactForPrice,
                 price: gem.price,
+                gstCategory: gem.gstCategory,
                 heroImage: gem.heroImage,
                 seller: gem.seller,
                 createdAt: gem.createdAt
@@ -668,7 +674,7 @@ router.get('/search-suggestions', async (req, res) => {
 router.get('/my-gems', protect, checkRole('seller'), async (req, res) => {
     try {
         const gems = await Gem.find({ seller: req.user._id })
-            .select('_id name hindiName category subcategory price discount discountType sizeWeight sizeUnit stock availability heroImage allImages contactForPrice createdAt')
+            .select('_id name hindiName category subcategory price discount discountType sizeWeight sizeUnit stock availability heroImage allImages contactForPrice gstCategory createdAt')
             .sort({ createdAt: -1 })
             .lean();
 
@@ -786,7 +792,7 @@ router.get('/:id', async (req, res) => {
         }
 
         // Select only needed fields for related products
-        const relatedSelectFields = '_id name hindiName category subcategory planet color price discount discountType heroImage images stock availability rating reviews seller createdAt';
+        const relatedSelectFields = '_id name hindiName category subcategory planet color price discount discountType heroImage images stock availability rating reviews gstCategory seller createdAt';
 
         // Try to find related products with multiple criteria - optimized query
         let relatedProducts = await Gem.find({
@@ -950,7 +956,12 @@ router.put('/:id', protect, checkRole('seller'), [
     body('discountType')
         .optional({ checkFalsy: true })
         .isIn(['percentage', 'flat'])
-        .withMessage('Invalid discount type')
+        .withMessage('Invalid discount type'),
+    body('gstCategory')
+        .optional({ checkFalsy: true })
+        .trim()
+        .isIn(['rough_unworked', 'cut_polished', 'rough_diamonds', 'cut_diamonds'])
+        .withMessage('Invalid GST category. Must be one of: rough_unworked, cut_polished, rough_diamonds, cut_diamonds')
 ], async (req, res) => {
     try {
         const errors = validationResult(req);

@@ -33,6 +33,24 @@ const orderSchema = new mongoose.Schema({
                 type: mongoose.Schema.Types.ObjectId,
                 ref: 'User',
                 required: true
+            },
+            gstCategory: {
+                type: String,
+                enum: ['rough_unworked', 'cut_polished', 'rough_diamonds', 'cut_diamonds'],
+                trim: true
+            },
+            gstRate: {
+                type: Number,
+                min: [0, 'GST rate cannot be negative']
+            },
+            gstAmount: {
+                type: Number,
+                min: [0, 'GST amount cannot be negative'],
+                default: 0
+            },
+            priceBeforeGST: {
+                type: Number,
+                min: [0, 'Price before GST cannot be negative']
             }
         }
     ],
@@ -120,6 +138,25 @@ const orderSchema = new mongoose.Schema({
     },
     cancelledAt: {
         type: Date
+    },
+    gstSummary: {
+        totalGST: {
+            type: Number,
+            default: 0,
+            min: [0, 'Total GST cannot be negative']
+        },
+        gstBreakdown: [{
+            rate: {
+                type: Number,
+                required: true,
+                min: [0, 'GST rate cannot be negative']
+            },
+            amount: {
+                type: Number,
+                required: true,
+                min: [0, 'GST amount cannot be negative']
+            }
+        }]
     }
 }, {
     timestamps: true

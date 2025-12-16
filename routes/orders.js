@@ -5,6 +5,7 @@ const Gem = require('../models/Gem');
 const Cart = require('../models/Cart');
 const { protect } = require('../middleware/auth');
 const { checkRole } = require('../middleware/role');
+const { calculateGSTForItem, calculateGSTSummary, getGSTRate } = require('../utils/gstUtils');
 
 const router = express.Router();
 
@@ -35,7 +36,7 @@ router.post('/', protect, checkRole('buyer'), [
 
         const { items, shippingAddress, paymentMethod, totalPrice } = req.body;
 
-        // Validate and get gem details
+        // Validate and get gem details with GST calculation
         const orderItems = await Promise.all(
             items.map(async (item) => {
                 const gem = await Gem.findById(item.gem).populate('seller', '_id');
@@ -46,14 +47,34 @@ router.post('/', protect, checkRole('buyer'), [
                     throw new Error(`${gem.name} is not available or insufficient stock`);
                 }
 
+                // Calculate GST for this item
+                const gstCategory = item.gstCategory || gem.gstCategory;
+                const gstCalc = calculateGSTForItem({
+                    price: item.price,
+                    quantity: item.quantity,
+                    gstCategory
+                });
+
                 return {
                     gem: item.gem,
                     quantity: item.quantity,
-                    price: item.price,
-                    seller: gem.seller._id
+                    price: item.price, // Price includes GST (as per frontend)
+                    seller: gem.seller._id,
+                    gstCategory: gstCategory,
+                    gstRate: gstCalc.gstRate,
+                    gstAmount: gstCalc.gstAmount,
+                    priceBeforeGST: gstCalc.priceBeforeGST
                 };
             })
         );
+
+        // Calculate GST summary for the order
+        const gstSummary = calculateGSTSummary(orderItems.map(item => ({
+            gem: item.gem,
+            price: item.price,
+            quantity: item.quantity,
+            gstCategory: item.gstCategory
+        })));
 
         // Reduce stock for COD orders (immediate stock reduction)
         if (paymentMethod === 'COD') {
@@ -67,13 +88,17 @@ router.post('/', protect, checkRole('buyer'), [
             }
         }
 
-        // Create order
+        // Create order with GST information
         const order = new Order({
             user: req.user._id,
             items: orderItems,
             shippingAddress,
             paymentMethod,
-            totalPrice
+            totalPrice,
+            gstSummary: {
+                totalGST: gstSummary.totalGST,
+                gstBreakdown: gstSummary.gstBreakdown
+            }
         });
 
         await order.save();
