@@ -739,11 +739,11 @@ const gemsData = [
         whomToUse: ["Mercury weak", "Green gem"]
     },
 
-    // CAT'S EYE & HESSONITE CATEGORY
+    // CAT'S EYE CATEGORY
     {
         name: "Cat's Eye",
         hindiName: "लेहसुनिया",
-        category: "Cat's Eye & Hessonite",
+        category: "Cat's Eye",
         subcategory: "Cat's Eye",
         planet: "Ketu (Ketu Grah)",
         planetHindi: "केतु ग्रह",
@@ -772,7 +772,7 @@ const gemsData = [
     {
         name: "Hessonite",
         hindiName: "गोमेद",
-        category: "Cat's Eye & Hessonite",
+        category: "Hessonite",
         subcategory: "Hessonite",
         planet: "Rahu (Rahu Grah)",
         planetHindi: "राहु ग्रह",

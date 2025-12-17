@@ -7,7 +7,8 @@ const GEM_CATEGORIES = [
     'Coral',
     'Topaz & Quartz',
     'Opal & Exotic',
-    "Cat's Eye & Hessonite",
+    "Cat's Eye",
+    'Hessonite',
     'Alexandrite',
     'Custom'
 ];

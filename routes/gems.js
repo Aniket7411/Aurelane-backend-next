@@ -51,11 +51,22 @@ const parseCategories = (rawCategories) => {
         return [];
     }
 
-    const invalid = categories.filter((cat) => !CATEGORY_LIST.includes(cat));
+    // Backward compatibility: Map old category to new categories
+    const normalizedCategories = [];
+    for (const cat of categories) {
+        if (cat === "Cat's Eye & Hessonite") {
+            // Map old category to both new categories for filtering
+            normalizedCategories.push("Cat's Eye", "Hessonite");
+        } else {
+            normalizedCategories.push(cat);
+        }
+    }
+
+    const invalid = normalizedCategories.filter((cat) => !CATEGORY_LIST.includes(cat));
     if (invalid.length) {
         throw createBadRequestError(`Invalid categories: ${invalid.join(', ')}`);
     }
-    return categories;
+    return normalizedCategories;
 };
 
 const buildCategoryCondition = (categories) => {
@@ -538,7 +549,17 @@ router.get('/categories', async (req, res) => {
 // @access  Public
 router.get('/category/:categoryName', async (req, res) => {
     try {
-        const { categoryName } = req.params;
+        let { categoryName } = req.params;
+        
+        // Backward compatibility: Map old category to both new categories
+        if (categoryName === "Cat's Eye & Hessonite") {
+            // Return gems from both new categories
+            const { gems, pagination } = await fetchGemsWithFilters(req.query, { 
+                category: { $in: ["Cat's Eye", "Hessonite"] }
+            });
+            return sendGemResponse(res, gems, pagination);
+        }
+        
         if (!CATEGORY_LIST.includes(categoryName)) {
             return res.status(400).json({
                 success: false,
