@@ -67,6 +67,10 @@ const gemSchema = new mongoose.Schema({
             message: 'Invalid birth month. Must be one of: January, February, March, April, May, June, July, August, September, October, November, December, or null'
         }
     },
+    isCustomStone: {
+        type: Boolean,
+        default: false
+    },
     category: {
         type: String,
         required: [true, 'Category is required'],
@@ -207,6 +211,41 @@ gemSchema.pre('validate', function (next) {
     next();
 });
 
+// Validation rules for custom stones vs regular gems
+gemSchema.pre('validate', function (next) {
+    const isCustom = this.isCustomStone === true;
+    
+    if (isCustom) {
+        // Custom stone validation
+        // Planet and planetHindi must be null or empty
+        if (this.planet && this.planet.trim() !== '') {
+            return next(new Error('planet must be null or empty for custom stones'));
+        }
+        if (this.planetHindi && this.planetHindi.trim() !== '') {
+            return next(new Error('planetHindi must be null or empty for custom stones'));
+        }
+        // BirthMonth is required for custom stones
+        if (!this.birthMonth || this.birthMonth.trim() === '') {
+            return next(new Error('birthMonth is required for custom stones'));
+        }
+        // Ensure planet and planetHindi are set to null
+        this.planet = null;
+        this.planetHindi = null;
+    } else {
+        // Regular gem validation
+        // Planet is required for regular gems
+        if (!this.planet || this.planet.trim() === '') {
+            return next(new Error('planet is required for regular gems'));
+        }
+        // PlanetHindi is required for regular gems
+        if (!this.planetHindi || this.planetHindi.trim() === '') {
+            return next(new Error('planetHindi is required for regular gems'));
+        }
+    }
+    
+    next();
+});
+
 // Automatic availability update based on stock
 gemSchema.pre('save', function (next) {
     if (this.stock === 0) {
@@ -256,8 +295,8 @@ gemSchema.pre('findOneAndUpdate', function (next) {
 });
 
 // Indexes for better search performance
-// Text search index (for full-text search)
-gemSchema.index({ name: 'text', description: 'text', hindiName: 'text', planet: 'text', color: 'text' });
+// Text search index (for full-text search) - includes birthMonth for custom stones
+gemSchema.index({ name: 'text', description: 'text', hindiName: 'text', planet: 'text', planetHindi: 'text', color: 'text', origin: 'text', birthMonth: 'text' });
 
 // Single field indexes for filtering and sorting
 gemSchema.index({ name: 1 }); // Case-insensitive search
@@ -273,6 +312,7 @@ gemSchema.index({ stock: 1 }); // Stock filter
 gemSchema.index({ subcategory: 1 }); // Subcategory filter
 gemSchema.index({ category: 1 }); // Category filter
 gemSchema.index({ birthMonth: 1 }); // Birth month filter
+gemSchema.index({ isCustomStone: 1 }); // Custom stone filter
 
 // Compound indexes for common query patterns
 gemSchema.index({ availability: 1, name: 1 }); // Available gems by name
@@ -283,6 +323,7 @@ gemSchema.index({ category: 1, availability: 1, price: 1 }); // Category filteri
 gemSchema.index({ category: 1, availability: 1, createdAt: -1 }); // Category filtering with newest sort
 gemSchema.index({ category: 1, availability: 1 }); // Category + availability filter
 gemSchema.index({ birthMonth: 1, availability: 1 }); // Birth month filtering
+gemSchema.index({ isCustomStone: 1, birthMonth: 1 }); // Custom stone by birth month
 gemSchema.index({ suitableFor: 1, availability: 1 }); // Zodiac/suitableFor filtering
 gemSchema.index({ contactForPrice: 1, price: 1 }); // Price sorting with contactForPrice
 gemSchema.index({ seller: 1, availability: 1, createdAt: -1 }); // Seller's gems

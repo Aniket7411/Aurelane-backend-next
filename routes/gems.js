@@ -214,6 +214,7 @@ const buildGemQueryOptions = (queryParams = {}, baseQuery = {}) => {
             { planetHindi: { $regex: searchTerm, $options: 'i' } },
             { color: { $regex: searchTerm, $options: 'i' } },
             { origin: { $regex: searchTerm, $options: 'i' } },
+            { birthMonth: { $regex: searchTerm, $options: 'i' } }, // Added for custom stones
             { benefits: { $regex: searchTerm, $options: 'i' } },
             { suitableFor: { $regex: searchTerm, $options: 'i' } }
         ];
@@ -377,11 +378,44 @@ router.post('/', protect, checkRole('seller'), [
         .isIn(CATEGORY_LIST).withMessage('Invalid category'),
     body('subcategory').trim().notEmpty().withMessage('Subcategory is required'),
     body('hindiName').trim().notEmpty().withMessage('Hindi name is required'),
+    body('isCustomStone')
+        .optional()
+        .isBoolean().withMessage('isCustomStone must be a boolean'),
     body('planet')
         .optional({ checkFalsy: true })
+        .custom((value, { req }) => {
+            const isCustomStone = req.body.isCustomStone === true || req.body.isCustomStone === 'true';
+            if (isCustomStone) {
+                // For custom stones, planet must be null or empty
+                if (value && value.trim() !== '') {
+                    throw new Error('planet must be null or empty for custom stones');
+                }
+            } else {
+                // For regular gems, planet is required
+                if (!value || value.trim() === '') {
+                    throw new Error('planet is required for regular gems');
+                }
+            }
+            return true;
+        })
         .isLength({ max: 100 }).withMessage('Planet cannot exceed 100 characters'),
     body('planetHindi')
         .optional({ checkFalsy: true })
+        .custom((value, { req }) => {
+            const isCustomStone = req.body.isCustomStone === true || req.body.isCustomStone === 'true';
+            if (isCustomStone) {
+                // For custom stones, planetHindi must be null or empty
+                if (value && value.trim() !== '') {
+                    throw new Error('planetHindi must be null or empty for custom stones');
+                }
+            } else {
+                // For regular gems, planetHindi is required
+                if (!value || value.trim() === '') {
+                    throw new Error('planetHindi is required for regular gems');
+                }
+            }
+            return true;
+        })
         .isLength({ max: 100 }).withMessage('Planet Hindi cannot exceed 100 characters'),
     body('color')
         .optional({ checkFalsy: true })
@@ -410,8 +444,23 @@ router.post('/', protect, checkRole('seller'), [
     body('sizeUnit').isIn(['carat', 'gram', 'ratti']).withMessage('Valid size unit is required'),
     body('birthMonth')
         .optional({ nullable: true, checkFalsy: true })
-        .isIn(VALID_BIRTH_MONTHS)
-        .withMessage('Invalid birth month'),
+        .custom((value, { req }) => {
+            const isCustomStone = req.body.isCustomStone === true || req.body.isCustomStone === 'true';
+            if (isCustomStone) {
+                // For custom stones, birthMonth is required
+                if (!value || value.trim() === '') {
+                    throw new Error('birthMonth is required for custom stones');
+                }
+                if (!VALID_BIRTH_MONTHS.includes(value)) {
+                    throw new Error(`Invalid birth month. Must be one of: ${VALID_BIRTH_MONTHS.join(', ')}`);
+                }
+            }
+            // For regular gems, birthMonth is optional but must be valid if provided
+            if (value && value.trim() !== '' && !VALID_BIRTH_MONTHS.includes(value)) {
+                throw new Error(`Invalid birth month. Must be one of: ${VALID_BIRTH_MONTHS.join(', ')}`);
+            }
+            return true;
+        }),
     body('discountType')
         .optional({ checkFalsy: true })
         .isIn(['percentage', 'flat'])
@@ -440,14 +489,46 @@ router.post('/', protect, checkRole('seller'), [
         if (typeof req.body.contactForPrice === 'string') {
             req.body.contactForPrice = req.body.contactForPrice === 'true';
         }
+        if (typeof req.body.isCustomStone === 'string') {
+            req.body.isCustomStone = req.body.isCustomStone === 'true';
+        }
+        
         // If contactForPrice is true, ensure price is null
         if (req.body.contactForPrice === true) {
             req.body.price = null;
         }
 
-        // Normalize birthMonth: empty string or undefined becomes null
-        if (req.body.birthMonth === '' || req.body.birthMonth === undefined) {
-            req.body.birthMonth = null;
+        // Handle custom stone logic
+        const isCustomStone = req.body.isCustomStone === true;
+        if (isCustomStone) {
+            // For custom stones, ensure planet and planetHindi are null
+            req.body.planet = null;
+            req.body.planetHindi = null;
+            // BirthMonth is required and should not be null
+            if (!req.body.birthMonth || req.body.birthMonth.trim() === '') {
+                return res.status(400).json({
+                    success: false,
+                    message: 'birthMonth is required for custom stones'
+                });
+            }
+        } else {
+            // For regular gems, normalize birthMonth: empty string or undefined becomes null
+            if (req.body.birthMonth === '' || req.body.birthMonth === undefined) {
+                req.body.birthMonth = null;
+            }
+            // Ensure planet and planetHindi are provided for regular gems
+            if (!req.body.planet || req.body.planet.trim() === '') {
+                return res.status(400).json({
+                    success: false,
+                    message: 'planet is required for regular gems'
+                });
+            }
+            if (!req.body.planetHindi || req.body.planetHindi.trim() === '') {
+                return res.status(400).json({
+                    success: false,
+                    message: 'planetHindi is required for regular gems'
+                });
+            }
         }
 
         const gemData = { ...req.body, seller: req.user._id };
@@ -952,6 +1033,43 @@ router.put('/:id', protect, checkRole('seller'), [
         .trim()
         .isIn(CATEGORY_LIST).withMessage('Invalid category'),
     body('subcategory').optional().trim().notEmpty().withMessage('Subcategory cannot be empty'),
+    body('isCustomStone')
+        .optional()
+        .isBoolean().withMessage('isCustomStone must be a boolean'),
+    body('planet')
+        .optional({ checkFalsy: true })
+        .custom((value, { req }) => {
+            const isCustomStone = req.body.isCustomStone === true || req.body.isCustomStone === 'true';
+            if (isCustomStone) {
+                // For custom stones, planet must be null or empty
+                if (value && value.trim() !== '') {
+                    throw new Error('planet must be null or empty for custom stones');
+                }
+            }
+            // For regular gems, if planet is provided, it must not be empty
+            if (value !== undefined && value !== null && value.trim() === '') {
+                throw new Error('planet cannot be empty for regular gems');
+            }
+            return true;
+        })
+        .isLength({ max: 100 }).withMessage('Planet cannot exceed 100 characters'),
+    body('planetHindi')
+        .optional({ checkFalsy: true })
+        .custom((value, { req }) => {
+            const isCustomStone = req.body.isCustomStone === true || req.body.isCustomStone === 'true';
+            if (isCustomStone) {
+                // For custom stones, planetHindi must be null or empty
+                if (value && value.trim() !== '') {
+                    throw new Error('planetHindi must be null or empty for custom stones');
+                }
+            }
+            // For regular gems, if planetHindi is provided, it must not be empty
+            if (value !== undefined && value !== null && value.trim() === '') {
+                throw new Error('planetHindi cannot be empty for regular gems');
+            }
+            return true;
+        })
+        .isLength({ max: 100 }).withMessage('Planet Hindi cannot exceed 100 characters'),
     body('contactForPrice').optional().isBoolean().withMessage('contactForPrice must be a boolean'),
     body('price')
         .optional({ nullable: true })
@@ -972,8 +1090,23 @@ router.put('/:id', protect, checkRole('seller'), [
     body('sizeUnit').optional().isIn(['carat', 'gram', 'ratti']).withMessage('Valid size unit is required'),
     body('birthMonth')
         .optional({ nullable: true, checkFalsy: true })
-        .isIn(VALID_BIRTH_MONTHS)
-        .withMessage('Invalid birth month'),
+        .custom((value, { req }) => {
+            const isCustomStone = req.body.isCustomStone === true || req.body.isCustomStone === 'true';
+            if (isCustomStone) {
+                // For custom stones, birthMonth is required
+                if (!value || value.trim() === '') {
+                    throw new Error('birthMonth is required for custom stones');
+                }
+                if (!VALID_BIRTH_MONTHS.includes(value)) {
+                    throw new Error(`Invalid birth month. Must be one of: ${VALID_BIRTH_MONTHS.join(', ')}`);
+                }
+            }
+            // For regular gems, birthMonth is optional but must be valid if provided
+            if (value && value.trim() !== '' && !VALID_BIRTH_MONTHS.includes(value)) {
+                throw new Error(`Invalid birth month. Must be one of: ${VALID_BIRTH_MONTHS.join(', ')}`);
+            }
+            return true;
+        }),
     body('discountType')
         .optional({ checkFalsy: true })
         .isIn(['percentage', 'flat'])
@@ -1015,14 +1148,57 @@ router.put('/:id', protect, checkRole('seller'), [
         if (typeof req.body.contactForPrice === 'string') {
             req.body.contactForPrice = req.body.contactForPrice === 'true';
         }
+        // Normalize isCustomStone
+        if (typeof req.body.isCustomStone === 'string') {
+            req.body.isCustomStone = req.body.isCustomStone === 'true';
+        }
+        
         // If contactForPrice is true, ensure price is null
         if (req.body.contactForPrice === true) {
             req.body.price = null;
         }
 
-        // Normalize birthMonth: empty string or undefined becomes null
-        if (req.body.birthMonth === '' || req.body.birthMonth === undefined) {
-            req.body.birthMonth = null;
+        // Handle custom stone logic
+        const isCustomStone = req.body.isCustomStone !== undefined 
+            ? (req.body.isCustomStone === true) 
+            : gem.isCustomStone; // Use existing value if not provided
+        
+        if (isCustomStone) {
+            // For custom stones, ensure planet and planetHindi are null
+            req.body.planet = null;
+            req.body.planetHindi = null;
+            // BirthMonth is required and should not be null
+            if (req.body.birthMonth !== undefined && (!req.body.birthMonth || req.body.birthMonth.trim() === '')) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'birthMonth is required for custom stones'
+                });
+            }
+            // If updating to custom stone and birthMonth not provided, check existing gem
+            if (req.body.birthMonth === undefined && (!gem.birthMonth || gem.birthMonth.trim() === '')) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'birthMonth is required for custom stones'
+                });
+            }
+        } else {
+            // For regular gems, normalize birthMonth: empty string or undefined becomes null
+            if (req.body.birthMonth === '' || req.body.birthMonth === undefined) {
+                req.body.birthMonth = null;
+            }
+            // If updating to regular gem, ensure planet and planetHindi are provided if not already set
+            if (req.body.planet === undefined && (!gem.planet || gem.planet.trim() === '')) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'planet is required for regular gems'
+                });
+            }
+            if (req.body.planetHindi === undefined && (!gem.planetHindi || gem.planetHindi.trim() === '')) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'planetHindi is required for regular gems'
+                });
+            }
         }
 
         // Update gem
